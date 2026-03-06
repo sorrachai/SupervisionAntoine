@@ -1,0 +1,14 @@
+name = "RandomizedFramework"
+version = "0.1.0"
+defaultTargets = ["randomizedframework"]
+
+[[lean_lib]]
+name = "RandomizedFramework"
+
+[[lean_exe]]
+name = "randomizedframework"
+root = "Main"
+
+[[require]]
+name = "mathlib"
+git = "https://github.com/leanprover-community/mathlib4"
