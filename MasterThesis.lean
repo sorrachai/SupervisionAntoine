@@ -2,11 +2,14 @@ import Mathlib.Probability.ProbabilityMassFunction.Basic
 import Mathlib.Probability.ProbabilityMassFunction.Monad
 import Mathlib.Probability.ProbabilityMassFunction.Constructions
 import Mathlib.Data.Rat.Defs
+import Mathlib.Probability.Distributions.Uniform
 import Mathlib.Data.Fintype.Basic
 import Mathlib.Data.Fin.Basic
+import Mathlib.Tactic
 
 /-!
   Framework for analysis of randomized algorithm.
+  ARA = "Analysis of Randomized Algorithms"
   Author: Antoine du Fresne von Hohenesche
   Date: March 2026
 -/
@@ -18,10 +21,6 @@ prove bounds on the probability of certain events (e.g. "the algorithm returns t
 prove bounds on the expected running time of the algorithm (so a cost function)
 prove bounds on the probability of certain events happening within a certain time bound
 (e.g. "the algorithm returns the wrong answer within 100 steps"). Things like this.
--/
-
-/-
-"Phase 1: Invariant Mapping & Toy Implementations"
 -/
 
 /-
@@ -37,8 +36,8 @@ PMF.toMeasure.isProbabilityMeasure shows this associated measure
 is a probability measure.
 
 Conversely any probability measure on α where singletons are measurable gives a PMF
-by assigning to each element the measure of its singleton. This is done by the `toPmf`
-function: -.toPmf. These two functions are inverses of each other.
+by assigning to each element the measure of its singleton. This is done by the `toPMF`
+function: .toPMF . These two functions are inverses of each other.
 
 On top of this structure, Mathlib defines a monad structure on PMF, with the following operations:
 
@@ -53,10 +52,11 @@ On top of this structure, Mathlib defines a monad structure on PMF, with the fol
   the distribution over β obtained by "sampling" from the first distribution and
   then "sampling" from the second distribution i.e. assigns b : β to the probability:
   ∑ a : α, P a * (f a) b
+
+  It used concretely like this : pure x for pure x and P >>= f for bind (P,f).
 -/
 
-
-namespace RandomizedFramework
+namespace ARA
 
 open PMF
 
@@ -74,7 +74,6 @@ theorem coin_flip_prob_heads : coin_flip true = 1/2 := by
   -- Unfold the definition of coin_flip and apply Bernoulli properties
   simp [coin_flip, PMF.bernoulli_apply]
 
-
 /-!
   ### Phase 1: Advanced Primitives & Invariant Mapping
 
@@ -82,15 +81,9 @@ theorem coin_flip_prob_heads : coin_flip true = 1/2 := by
   1.  **Chaining (bind):** A coin flip deciding between different subsequent random processes.
   2.  **Deterministic Steps (pure):** Embedding deterministic values into the probability space.
   3.  **Strict Safety (bindOnSupport):** Mathematically guaranteeing that invalid operations are never reachable.
-
-  NOTE ON RUNNING TIME:
-  The standard `PMF` monad tracks probability mass but not computational cost (running time).
-  In "Phase 2: Framework Construction", we will extend this to a custom `Rnd` monad
-  that pairs the probability space with a cost accumulator (WriterT Cost PMF), allowing
-  formal bounds on time complexity alongside probability.
 -/
 
-/--
+/-
   **Pragmatic Use 1: The Monadic Bind (Branching)**
 
   "Imagine an algorithm that flips a fair coin, and if heads, it rolls a 6-sided die;
@@ -100,28 +93,85 @@ theorem coin_flip_prob_heads : coin_flip true = 1/2 := by
   - Path 1: P(Heads) * P(d6=k) = 1/2 * 1/6
   - Path 2: P(Tails) * P(d20=k) = 1/2 * 1/20
 -/
+
 noncomputable def d6 : PMF (Fin 6) := PMF.uniformOfFintype (Fin 6)
 noncomputable def d20 : PMF (Fin 20) := PMF.uniformOfFintype (Fin 20)
 
-noncomputable def mixed_dice_game : PMF ℕ :=
-  coin_flip >>= λ is_heads =>
-    if is_heads then
-      -- If Heads, roll d6 and convert to Nat (1-based)
-      d6 >>= (λ result => pure (result.val + 1))
-    else
-      -- If Tails, roll d20 and convert to Nat (1-based)
-      d20 >>= (λ result => pure (result.val + 1))
+/-
+The probability mass function is obtained by two layers of bind operation:
+  -- One for the coin flip: coin_flip >>= (λ outcome => if outcome then d6 else d20)
+  -- One for the subsequent die roll based on the coin outcome:
+    * d6 >>= (λ result => PMF ℕ.pure (result.val + 1)) for heads
+      (we add 1 to the die result because result lives in Fin 6 which is {0,1,2,3,4,5})
+    * d20 >>= (λ result => PMF ℕ.pure (result.val + 1)) for tails.
+-/
+
+noncomputable def algorithm1: Bool → PMF ℕ
+| true => d6.bind (λ result => PMF.pure (result.val + 1))
+| false => d20.bind (λ result => PMF.pure (result.val + 1))
+
+noncomputable def mixed_dice_game : PMF ℕ := coin_flip.bind algorithm1
+
+-- e.g. to "compute" the probability of rolling a 3:
+theorem prob_rolling_3 : mixed_dice_game 3 = (1/2 : ENNReal) * (1/6 : ENNReal) + (1/2 : ENNReal) * (1/20 : ENNReal) := by
+  rw [mixed_dice_game, PMF.bind_apply, coin_flip]
+  simp [PMF.bernoulli_apply]
+  -- We prove the values for the two branches
+
+  have : algorithm1 true 3 = 1/6 := by
+    unfold algorithm1 d6
+    simp [PMF.bind_apply, PMF.uniformOfFintype_apply]
+    rw [Finset.sum_eq_single (2 : Fin 6)]
+    · simp
+    · intro b _ hb
+      simp
+      intro h
+      apply hb
+      apply Fin.eq_of_val_eq
+      simp_all
+    · simp
+
+  rw [this]
+
+  have : algorithm1 false 3 = 1/20 := by
+    unfold algorithm1 d20
+    simp [PMF.bind_apply, PMF.uniformOfFintype_apply]
+    rw [Finset.sum_eq_single (2 : Fin 20)]
+    · simp
+    · intro b _ hb
+      simp
+      intro h
+      apply hb
+      apply Fin.eq_of_val_eq
+      simp_all
+    · simp
+
+  rw [this]
+
+  simp_all
 
 /--
   **Pragmatic Use 2: Deterministic Embedding (Pure)**
 
   "If an algorithm reaches a deterministic step... pure embeds that guaranteed result."
 
-  Here, `deterministic_bonus` takes a value and deterministically adds to it.
-  In the monad, this is a transition with probability 1.
+  For example building on the previous example, we can define a deterministic bonus
+  that adds 100 to the die result.
 -/
-noncomputable def deterministic_bonus (score : ℕ) : PMF ℕ :=
-  pure (score + 100)
+noncomputable def deterministic_bonus (score : ℕ) : PMF ℕ := PMF.pure (score + 100)
+
+-- So that:
+noncomputable def mixed_dice_game_with_bonus : PMF ℕ := mixed_dice_game.bind deterministic_bonus
+
+-- The probability of rolling a 3 and then adding the bonus is the same as rolling a 3:
+theorem prob_rolling_3_with_bonus : mixed_dice_game_with_bonus 103 = mixed_dice_game 3 := by
+  rw [mixed_dice_game_with_bonus, PMF.bind_apply, mixed_dice_game]
+  simp [deterministic_bonus]
+
+/-
+A nice thing to have would be that we can specify a randomized algorithm in pseudo code
+and then analyze each of its branch very easily.
+-/
 
 /--
   **Pragmatic Use 3: STRICTLY SAFE CHAINING (bindOnSupport)**
@@ -142,8 +192,7 @@ noncomputable def safe_input_dist : PMF ℕ :=
   PMF.uniformOfFinset {1, 2} (by simp)
 
 -- A safer operation that requires a proof that the input is non-zero
-def rigorous_conditional_op (x : ℕ) (h : x ≠ 0) : PMF ℚ :=
-  pure (10 / (x : ℚ))
+def rigorous_conditional_op (x : ℕ) (h : x ≠ 0) : PMF ℚ := PMF.pure (10 / (x : ℚ))
 
 -- Using `bindOnSupport` to connect them.
 -- The compiler forces us to prove that every element in the support of `safe_input_dist`
@@ -161,6 +210,11 @@ noncomputable def safe_chaining_example : PMF ℚ :=
     rigorous_conditional_op x h_safe
   )
 
-  field_simp
-
-end RandomizedFramework
+/-
+  NOTE ON RUNNING TIME:
+  The standard `PMF` monad tracks probability mass but not computational cost (running time).
+  In "Phase 2: Framework Construction", we will extend this to a custom `Rnd` monad
+  that pairs the probability space with a cost accumulator (WriterT Cost PMF), allowing
+  formal bounds on time complexity alongside probability.
+-/
+end ARA
