@@ -24,6 +24,8 @@ prove bounds on the probability of certain events happening within a certain tim
 -/
 
 /-
+We are in a shallow embedding setting "Giry Monad":
+
 We utilize the `PMF` type (Probability Mass Function) which
 for a type α is the type of function α → ℝ≥0∞ such that the
 values have (infinite) sum 1.
@@ -176,39 +178,76 @@ and then analyze each of its branch very easily.
 /--
   **Pragmatic Use 3: STRICTLY SAFE CHAINING (bindOnSupport)**
 
-  "bindOnSupport requires a logical proof that a specific outcome is actually possible...
-   before allowing the function to calculate the next step."
+  "bindOnSupport is the standard bind operation but with an additional safety check: it
+  requires a logical proof that a specific outcome is actually possible before allowing
+  the function to calculate the next step."
+  Specifically, this means that if we have a distribution P : PMF α that is only supported
+  on certain values S ⊆ α that satisfy a property P(x) (e.g. "x < 2"), we can use `bindOnSupport`
+  to ensure that any subsequent operations are only defined on those values i.e.
+  P.bindsupport (λ x h => ...) (λ: \alpha)βre h is the proof that x is in the support of P and thus
+  satisfies P(x)) will be the probability distribution obtained by applying the function
+  λ to all x in the support of P, weighted by their probability
+  (it is a PMF since the total sum remains 1 as the domain of the function λ is exactly those
+  that satisfy): P.bindsupport (λ x h => ...) a =
 
-  We model a distribution that yields 1 or 2, and a function that computes 10 / x.
-  While Lean division is total (x/0 = 0), `bindOnSupport` allows us to model
-  partial functions or constraints rigorously, proving the "bad" case (0) never happens.
+  Example:
+  Accessing an array at an out-of-bounds index is impossible if we use `Fin n`.
+  We cannot even construct the function call without a proof that the index is in bounds.
 
-  The compiler mathematically rejects execution paths where the invalid number
-  had a 0 probability of occurring.
+  Here, we have a distribution over `ℕ` that we know is supported on `{0, 1}`.
+  We want to safely access a list of size 2. `bindOnSupport` allows us to bridge the gap.
 -/
 
--- A distribution that only supports {1, 2}
-noncomputable def safe_input_dist : PMF ℕ :=
-  PMF.uniformOfFinset {1, 2} (by simp)
+-- A distribution that only supports {0, 1}
+noncomputable def safe_index_dist : PMF ℕ := PMF.uniformOfFinset {0, 1} (by simp)
 
--- A safer operation that requires a proof that the input is non-zero
-def rigorous_conditional_op (x : ℕ) (h : x ≠ 0) : PMF ℚ := PMF.pure (10 / (x : ℚ))
+-- A strict operation that cannot be called without a proof that n < 2.
+-- It safely extracts elements from a 2-element list.
+noncomputable def strict_list_access (n : ℕ) (h : n < 2) : PMF String :=
+  let my_data := ["Result A", "Result B"]
+  -- We construct a valid Fin index using the proof `h`
+  let safe_idx : Fin 2 := ⟨n, h⟩
+  -- We need to prove the index is valid for the list length
+  have h_valid : safe_idx.val < my_data.length := by
+    simp [my_data]
+
+  PMF.pure (my_data.get ⟨safe_idx, h_valid⟩)
 
 -- Using `bindOnSupport` to connect them.
--- The compiler forces us to prove that every element in the support of `safe_input_dist`
--- satisfies the precondition `x ≠ 0`.
-noncomputable def safe_chaining_example : PMF ℚ :=
-  safe_input_dist.bindOnSupport (λ x h_support =>
-    have h_safe : x ≠ 0 := by
-      -- The proof: The support is {1, 2}. If x ∈ {1, 2}, then x ≠ 0.
-      simp [safe_input_dist, PMF.support_uniformOfFinset] at h_support
-      intro h_zero
-      rw [h_zero] at h_support
-      -- 0 ∈ {1, 2} simplifies to false
-      simp at h_support
+-- The compiler forces us to prove that every element in the support of `safe_index_dist`
+-- satisfies `n < 2`.
+noncomputable def safe_chaining_example : PMF String :=
+  safe_index_dist.bindOnSupport (λ n h_support =>
+    have h_safe : n < 2 := by
+      -- The support is {0, 1}.
+      simp [safe_index_dist, PMF.support_uniformOfFinset] at h_support
+      -- Prove that if n ∈ {0, 1}, then n < 2
+      cases h_support with
+      | inl h0 => rw [h0]; norm_num
+      | inr h1 => rw [h1]; norm_num
 
-    rigorous_conditional_op x h_safe
+    strict_list_access n h_safe
   )
+
+/-
+Lets write some typical other exceptions than division by 0:
+
+- Accessing the head of an empty list
+- Taking the logarithm of a non-positive number
+- Inverting a non-invertible matrix
+and so on...
+-/
+
+/-
+We should also be able handle and distinguishe non-termination
+observation failures and error states.
+-/
+
+/-
+A nice thing would be to potentially mixing continuous and discrete dis-
+tributions.
+-/
+
 
 /-
   NOTE ON RUNNING TIME:
@@ -217,4 +256,37 @@ noncomputable def safe_chaining_example : PMF ℚ :=
   that pairs the probability space with a cost accumulator (WriterT Cost PMF), allowing
   formal bounds on time complexity alongside probability.
 -/
+
+/-
+There are various approaches for reasoning about randomized algorithms in a
+formal way. Analogously to the non-randomized setting described in Sect. 2,
+there again exists an entire spectrum of diﬀerent approaches:
+– fully explicit/deeply-embedded approaches
+– “no embedding” approaches that model randomized algorithms directly in the
+logic as functions returning a probability distribution
+– shallow embeddings, e.g. with shallow deterministic operations but explicit
+random choice and explicit “while” loops. Examples are the approaches by
+Petcher and Morrisett [165] in Coq and by Kaminski et al. [110] on paper
+(which was formalized by Hölzl [105]).
+– combined approaches that start with a program in a deeply-embedded prob-
+abilistic programming language and then relate it to a distribution specified
+directly in the logic, cf. e.g. Tassarotti and Harper [188].
+
+The ideal would be no embedings.
+-/
+
+/-
+Directly in the Logic (No Embedding). As was mentioned before, many
+ITPs oﬀer functionality to define algorithms directly in the logic of the system
+– usually functionally. This approach is more flexible since algorithms can use
+the full expressiveness of the system’s logic and not only some fixed restricted
+set of language constructs. One possible drawback of this approach is that it
+can be diﬃcult or even impossible to reason about notions such as running time
+explicitly. A possible workaround is to define an explicit cost function for the
+algorithm, but since there is no formal connection between that function and
+the algorithm, one must check by inspection that the cost function really does
+correspond to the incurred cost. Another disadvantage is that, as was said earlier,
+most logics do not have builtin support for imperative algorithms.
+-/
+
 end ARA
