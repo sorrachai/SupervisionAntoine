@@ -15,16 +15,7 @@ import Mathlib.Tactic
 -/
 
 /-
-Essentially, if we fix multipple random variables and an algorithm that uses them,
-we want to model the entire execution of the algorithm and at the end be able to
-prove bounds on the probability of certain events (e.g. "the algorithm returns the wrong answer")
-prove bounds on the expected running time of the algorithm (so a cost function)
-prove bounds on the probability of certain events happening within a certain time bound
-(e.g. "the algorithm returns the wrong answer within 100 steps"). Things like this.
--/
-
-/-
-We are in a shallow embedding setting "Giry Monad":
+We use a shallow embedding setting "Giry Monad":
 
 We utilize the `PMF` type (Probability Mass Function) which
 for a type α is the type of function α → ℝ≥0∞ such that the
@@ -41,7 +32,8 @@ Conversely any probability measure on α where singletons are measurable gives a
 by assigning to each element the measure of its singleton. This is done by the `toPMF`
 function: .toPMF . These two functions are inverses of each other.
 
-On top of this structure, Mathlib defines a monad structure on PMF, with the following operations:
+On top of this structure, Mathlib defines a monad structure on PMF (the Giry Monad),
+with the following operations:
 
 - `pure : α → PMF α` which takes a value and returns the distribution that is
   concentrated on that value (the Dirac distribution).
@@ -56,6 +48,13 @@ On top of this structure, Mathlib defines a monad structure on PMF, with the fol
   ∑ a : α, P a * (f a) b
 
   It used concretely like this : pure x for pure x and P >>= f for bind (P,f).
+-/
+
+/-
+The main advantage of having probability distributions in the logic as first-class
+citizens is again expressiveness and flexibility. It is then even possible to prove
+that two algorithms with completely diﬀerent structure have not just the same
+expected running time, but exactly the same distribution.
 -/
 
 namespace ARA
@@ -77,9 +76,9 @@ theorem coin_flip_prob_heads : coin_flip true = 1/2 := by
   simp [coin_flip, PMF.bernoulli_apply]
 
 /-!
-  ### Phase 1: Advanced Primitives & Invariant Mapping
+  ### Phase 1: Basic Probability Manipulation and familiarisation with PMF
 
-  Here we implement the specific "Pragmatic Use" cases requested:
+  Here we implement the specific "Pragmatic Use" cases:
   1.  **Chaining (bind):** A coin flip deciding between different subsequent random processes.
   2.  **Deterministic Steps (pure):** Embedding deterministic values into the probability space.
   3.  **Strict Safety (bindOnSupport):** Mathematically guaranteeing that invalid operations are never reachable.
@@ -170,25 +169,23 @@ theorem prob_rolling_3_with_bonus : mixed_dice_game_with_bonus 103 = mixed_dice_
   rw [mixed_dice_game_with_bonus, PMF.bind_apply, mixed_dice_game]
   simp [deterministic_bonus]
 
-/-
-A nice thing to have would be that we can specify a randomized algorithm in pseudo code
-and then analyze each of its branch very easily.
--/
-
 /--
   **Pragmatic Use 3: STRICTLY SAFE CHAINING (bindOnSupport)**
 
   "bindOnSupport is the standard bind operation but with an additional safety check: it
   requires a logical proof that a specific outcome is actually possible before allowing
   the function to calculate the next step."
+
   Specifically, this means that if we have a distribution P : PMF α that is only supported
   on certain values S ⊆ α that satisfy a property P(x) (e.g. "x < 2"), we can use `bindOnSupport`
   to ensure that any subsequent operations are only defined on those values i.e.
-  P.bindsupport (λ x h => ...) (λ: \alpha)βre h is the proof that x is in the support of P and thus
-  satisfies P(x)) will be the probability distribution obtained by applying the function
-  λ to all x in the support of P, weighted by their probability
-  (it is a PMF since the total sum remains 1 as the domain of the function λ is exactly those
-  that satisfy): P.bindsupport (λ x h => ...) a =
+  P.bindsupport (λ x h => ...) (for a λ : α → β) (where h is the proof that x is in the support
+  of P and thus satisfies P(x)) will be the probability distribution on β obtained by
+  applying the function λ to all x in the support of P, weighted by their probability
+  (it is a PMF since the total sum remains 1 as the domain of the function λ is exactly
+  those that satisfy):
+
+  for b : β, P.bindsupport (λ x h => ...) b = ∑ x in support of P, P x * (λ x h) b.
 
   Example:
   Accessing an array at an out-of-bounds index is impossible if we use `Fin n`.
@@ -201,17 +198,18 @@ and then analyze each of its branch very easily.
 -- A distribution that only supports {0, 1}
 noncomputable def safe_index_dist : PMF ℕ := PMF.uniformOfFinset {0, 1} (by simp)
 
--- A strict operation that cannot be called without a proof that n < 2.
+-- A strict operation that cannot be called without a proof that n < 2 (our λ).
 -- It safely extracts elements from a 2-element list.
 noncomputable def strict_list_access (n : ℕ) (h : n < 2) : PMF String :=
   let my_data := ["Result A", "Result B"]
   -- We construct a valid Fin index using the proof `h`
   let safe_idx : Fin 2 := ⟨n, h⟩
   -- We need to prove the index is valid for the list length
-  have h_valid : safe_idx.val < my_data.length := by
-    simp [my_data]
-
+  have h_valid : safe_idx.val < my_data.length := by simp [my_data]
+  -- Finally, we return the result as a pure distribution (deterministic)
   PMF.pure (my_data.get ⟨safe_idx, h_valid⟩)
+
+-- So our λ takes n : ℕ and a proof that n < 2, and returns a PMF String.
 
 -- Using `bindOnSupport` to connect them.
 -- The compiler forces us to prove that every element in the support of `safe_index_dist`
@@ -219,74 +217,46 @@ noncomputable def strict_list_access (n : ℕ) (h : n < 2) : PMF String :=
 noncomputable def safe_chaining_example : PMF String :=
   safe_index_dist.bindOnSupport (λ n h_support =>
     have h_safe : n < 2 := by
-      -- The support is {0, 1}.
-      simp [safe_index_dist, PMF.support_uniformOfFinset] at h_support
-      -- Prove that if n ∈ {0, 1}, then n < 2
-      cases h_support with
-      | inl h0 => rw [h0]; norm_num
-      | inr h1 => rw [h1]; norm_num
+      unfold safe_index_dist at h_support
+      simp_all
+      grind
 
     strict_list_access n h_safe
   )
 
-/-
-Lets write some typical other exceptions than division by 0:
+/-!
+  ### Phase 2: Formalizing and Analyzing a More Complex Randomized Algorithm
 
-- Accessing the head of an empty list
-- Taking the logarithm of a non-positive number
-- Inverting a non-invertible matrix
-and so on...
+  Lets now formalize quicksort as an example of a more complex randomized algorithm.
+
+  First lets recall the algorithm in its most general version:
+  Quicksort: "Sort a list"
+
+  - Input: A (finite) list of elements of a totally ordered set (S,≤) that is L : List S.
+  - Output: A permutation of the input list L that is sorted in non-decreasing
+    order w.r.t to the running index and ≤: i < j -> L[i] ≤ L[j].
+
+  Algorithm:
+    1. If the list is empty, return the empty list.
+    2. Otherwise, select a pivot element p from the list uniformly at random.
+    3. Partition the remaining elements into two sublists:
+        - L₁ = {x ∈ L | x < p}
+        - L₂ = {x ∈ L | x ≥ p}
+        by doing one traversal of the list, comparing each element to the pivot
+        and placing it in the appropriate sublist.
+    4. Recursively apply quicksort to L₁ and L₂ to obtain sorted sublists S₁ and S₂.
+    5. Return the concatenation of S₁, [p], and S₂: S₁ ++ [p] ++ S₂.
+
+  We can then analyze the probability of certain events
+  (e.g. "the pivot is the smallest element") using the PMF monad.
+
+  How do we proceed first:
+  - We can first define a function that takes a list and returns a PMF of the pivot selection.
+  - Then we can define the partitioning step as a deterministic function that takes the
+    list and the pivot and returns the two sublists.
+  - Finally, we can define the recursive quicksort function that uses the PMF monad to
+    chain the pivot selection and the recursive calls on the sublists.
 -/
 
-/-
-We should also be able handle and distinguishe non-termination
-observation failures and error states.
--/
-
-/-
-A nice thing would be to potentially mixing continuous and discrete dis-
-tributions.
--/
-
-
-/-
-  NOTE ON RUNNING TIME:
-  The standard `PMF` monad tracks probability mass but not computational cost (running time).
-  In "Phase 2: Framework Construction", we will extend this to a custom `Rnd` monad
-  that pairs the probability space with a cost accumulator (WriterT Cost PMF), allowing
-  formal bounds on time complexity alongside probability.
--/
-
-/-
-There are various approaches for reasoning about randomized algorithms in a
-formal way. Analogously to the non-randomized setting described in Sect. 2,
-there again exists an entire spectrum of diﬀerent approaches:
-– fully explicit/deeply-embedded approaches
-– “no embedding” approaches that model randomized algorithms directly in the
-logic as functions returning a probability distribution
-– shallow embeddings, e.g. with shallow deterministic operations but explicit
-random choice and explicit “while” loops. Examples are the approaches by
-Petcher and Morrisett [165] in Coq and by Kaminski et al. [110] on paper
-(which was formalized by Hölzl [105]).
-– combined approaches that start with a program in a deeply-embedded prob-
-abilistic programming language and then relate it to a distribution specified
-directly in the logic, cf. e.g. Tassarotti and Harper [188].
-
-The ideal would be no embedings.
--/
-
-/-
-Directly in the Logic (No Embedding). As was mentioned before, many
-ITPs oﬀer functionality to define algorithms directly in the logic of the system
-– usually functionally. This approach is more flexible since algorithms can use
-the full expressiveness of the system’s logic and not only some fixed restricted
-set of language constructs. One possible drawback of this approach is that it
-can be diﬃcult or even impossible to reason about notions such as running time
-explicitly. A possible workaround is to define an explicit cost function for the
-algorithm, but since there is no formal connection between that function and
-the algorithm, one must check by inspection that the cost function really does
-correspond to the incurred cost. Another disadvantage is that, as was said earlier,
-most logics do not have builtin support for imperative algorithms.
--/
 
 end ARA
