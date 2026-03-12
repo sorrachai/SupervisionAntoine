@@ -219,10 +219,17 @@ noncomputable def safe_chaining_example : PMF String :=
     have h_safe : n < 2 := by
       unfold safe_index_dist at h_support
       simp_all
-      grind
+      omega
 
     strict_list_access n h_safe
   )
+
+lemma safe_chaining_example_result : safe_chaining_example "Result A" = 1/2 := by
+  unfold safe_chaining_example safe_index_dist strict_list_access
+  simp_all
+
+
+  sorry
 
 /-!
   ### Phase 2: Formalizing and Analyzing a More Complex Randomized Algorithm
