@@ -368,7 +368,7 @@ If the token contains no data, what actually happens when we run a code with a p
   The mathematically pure, deeply nested bind functions that pass a dummy
   token around are stripped away, leaving behind raw, imperative C code.
 
-  When your Lean code says IO.rand 0 10, the generated C code does not pass
+  When our Lean code says IO.rand 0 10, the generated C code does not pass
   a universe token. It literally just calls the underlying C/C++ runtime
   function to ask the operating system for a random number.
 -/
@@ -380,10 +380,10 @@ through monadic bind operations is complex and
 mathematically heavy.
 -/
 
-partial def QuickSortRand : List ℕ → IO (List ℕ)
+partial def QuickSort_Rand : List ℕ → IO (List ℕ)
 | [] => pure []
 | L => do
-  let idx <- IO.rand 0 (L.length - 1)
+  let idx <- IO.rand 0 (L.length - 1) -- Uniformly select an index at random for the pivot
   let pivot := (L[idx]?).getD 0
   /-
   We do this except handling (if idx is within bound then , otherwise we take )
@@ -393,35 +393,128 @@ partial def QuickSortRand : List ℕ → IO (List ℕ)
   let rest := L.eraseIdx idx
   let L1 := rest.filter (fun x => x < pivot)
   let L2 := rest.filter (fun x => x ≥ pivot)
-  let S1 ← QuickSortRand L1
-  let S2 ← QuickSortRand L2
+  let S1 ← QuickSort_Rand L1
+  let S2 ← QuickSort_Rand L2
   pure (S1 ++ [pivot] ++ S2)
 
-/-
-  We can then analyze the probability of certain events
-  (e.g. "the pivot is the smallest element") using the PMF monad.
+#eval QuickSort_Rand [3, 1, 4, 1, 5, 9, 2, 6]
 
-  How do we proceed first:
-  - We can first define a function that takes a list and returns a PMF of the pivot selection.
-  - Then we can define the partitioning step as a deterministic function that takes the
-    list and the pivot and returns the two sublists.
-  - Finally, we can define the recursive quicksort function that uses the PMF monad to
-    chain the pivot selection and the recursive calls on the sublists.
+/-
+  Now lets make a QuickSort version using the PMF monad, where we
+  can analyze the probability of certain events.
+
+  How do we proceed:
+
+  - Given a list L ≠ [], we want to bind the pivot distribution P (a distribution over ℕ with finite support)
+    with the function f that takes any pivot and returns the pure distribution of the sorted list given
+    that pivot. The problem is that the pivot can be out of bounds and we cannot prove that it is not, so we
+    cannot directly use bind. We can however use bindOnSupport! Since the pivot distribution is supported on L,
+    we can prove that any pivot drawn from it (with positive probability) is in L and thus the function f is
+    well defined on the support of the pivot distribution.
+
+  - So, first we can define a pivot distribution that is uniform over the elements of the list L:
+    pivot_dist : PMF ℕ := PMF.uniformOfFinset (L.toFinset) (by simp) where L is the input list.
+
+  - Secondly, we can define the function ℕ → PMF (List ℕ) partitioning step that takes any pivot and
+    returns the two sublists. fun pivot =>
+      let L1 := L.filter (fun x => x < pivot)
+      let L2 := L.filter (fun x => x ≥ pivot)
+      let S1 ← QuickSort_A L1
+      let S2 ← QuickSort_A L2
+      PMF.pure (S1 ++ [pivot] ++ S2)
+
 -/
 
-
-def QuickSort_analysed : List ℕ → PMF (List ℕ) := fun
+noncomputable def QuickSort_A : List ℕ → PMF (List ℕ) := fun
 | [] => PMF.pure []
-| L => do
-  -- Step 1: Select a pivot uniformly at random from the list
-  let pivot_dist := PMF.uniformOfFinset (L.toFinset) (by simp)
-  pivot_dist.bind fun pivot =>
-    let L₁ := L.filter (fun x => x < pivot)
-    let L₂ := L.filter (fun x => x ≥ pivot)
+| head::tail => do
+  -- Step 1: Select a pivot uniformly at random from the list,
+  -- this amount choosing a random index between 0 and L.length - 1.
+  let L := head::tail
+  have : Nonempty (Fin L.length) := by
+    simp [L]
+    exact ⟨⟨0, by omega⟩⟩
+  let idx_pivot_dist := PMF.uniformOfFintype (Fin L.length)
+
+  -- Step 2: Partitioning step function (together with the bindOnSupport operation)
+  idx_pivot_dist.bindOnSupport fun idx_pivot h_idx_pivot => (
+    let pivot := L[idx_pivot]
+    let rest := L.eraseIdx idx_pivot
+
+    let L1 := rest.filter (fun x => x < pivot)
+    let L2 := rest.filter (fun x => x ≥ pivot)
     do
-      let S₁ ← QuickSort L₁
-      let S₂ ← QuickSort L₂
-      pure (S₁ ++ [pivot] ++ S₂)
+      let S1 ← QuickSort_A L1
+      let S2 ← QuickSort_A L2
+      PMF.pure (S1 ++ [pivot] ++ S2))
+  termination_by L => L.length
+  decreasing_by
+  all_goals
+    have h_rest : rest.length < L.length := by
+      rw [List.length_eraseIdx]
+      grind
+    apply Nat.lt_of_le_of_lt
+    · apply List.length_filter_le
+    · exact h_rest
+
+-- Now we can analyze the probability of certain events.
+/--
+  Lemma: The probability that QuickSort_A on an empty list returns
+  an empty list is exactly 1 (100%).
+-/
+lemma prob_quicksort_empty : QuickSort_A [] [] = 1 := by
+  -- The definition of QuickSort_A on an empty list is just PMF.pure [],
+  -- which assigns probability 1 to [] and 0 to any other list.
+  unfold QuickSort_A
+  simp
+
+/--
+  Lemma: A single-element list also deterministically returns itself
+  with probability 1.
+-/
+lemma prob_quicksort_singleton (n : ℕ) : QuickSort_A [n] [n] = 1 := by
+  -- The distribution of indices for a length 1 list is just {0}.
+  -- Erasing index 0 leaves [], which filters to [] and [].
+  -- The recursive calls return pure [], resulting in pure ([] ++ [n] ++ []).
+  unfold QuickSort_A
+  simp_all
+
+  apply PMF.bindOnSupport_apply
+  apply tsum_eq_single (0 : Fin 1)
+  simp [QuickSort_A, PMF.pure]q
+
+
+
+/-
+Now we can analyze the probability of certain events.
+Lets start slowly by proving that the first pivot is a minimum
+element of the list is 1/L.length, since the pivot is chosen
+uniformly at random from the list (this is trivial).
+-/
+
+lemma prob_first_pivot_is_min :
+∀ L : List ℕ, L ≠ [] → QuickSort_A L (L.min' (by simp)) = 1 / (L.length : ENNReal) := by
+  intro L hL
+  unfold QuickSort_A
+  simp
+  have : Nonempty (Fin L.length) := by
+    simp [L]
+    exact ⟨⟨0, by omega⟩⟩
+  rw [PMF.bindOnSupport_apply]
+  simp
+  apply tsum_eq_single (Fin.findIdx (L.min' (by simp)) _)
+  · intro a ha
+    rcases a with ⟨i, hi⟩ | a
+    · simp at hi
+      rw [hi]
+      simp
+    · simp at ha
+      contradiction
+
+/-
+An example more complicate would be
+-/
+
 
 
 end Phase2
