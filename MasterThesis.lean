@@ -7,14 +7,14 @@ import Mathlib.Data.Fintype.Basic
 import Mathlib.Data.Fin.Basic
 import Mathlib.Tactic
 
-/-!
+/-
   Framework for analysis of randomized algorithm.
   ARA = "Analysis of Randomized Algorithms"
   Author: Antoine du Fresne von Hohenesche
   Date: March 2026
 -/
 
-/-
+/-!
 We use a shallow embedding setting "Giry Monad":
 
 We utilize the `PMF` type (Probability Mass Function) which
@@ -48,13 +48,11 @@ with the following operations:
   ∑ a : α, P a * (f a) b
 
   It used concretely like this : pure x for pure x and P >>= f for bind (P,f).
--/
 
-/-
-The main advantage of having probability distributions in the logic as first-class
-citizens is again expressiveness and flexibility. It is then even possible to prove
+The main advantage of having probability distributions in the logic is its
+expressiveness and flexibility and also it is even possible to prove
 that two algorithms with completely diﬀerent structure have not just the same
-expected running time, but exactly the same distribution.
+expected running time, but exactly the same distribution probability of outputs/running times.
 -/
 
 namespace ARA
@@ -75,6 +73,7 @@ theorem coin_flip_prob_heads : coin_flip true = 1/2 := by
   -- Unfold the definition of coin_flip and apply Bernoulli properties
   simp [coin_flip, PMF.bernoulli_apply]
 
+section Phase1
 /-!
   ### Phase 1: Basic Probability Manipulation and familiarisation with PMF
 
@@ -224,13 +223,29 @@ noncomputable def safe_chaining_example : PMF String :=
     strict_list_access n h_safe
   )
 
-lemma safe_chaining_example_result : safe_chaining_example "Result A" = 1/2 := by
+lemma safe_chaining_example_resultA : safe_chaining_example "Result A" = 1/2 := by
   unfold safe_chaining_example safe_index_dist strict_list_access
   simp_all
+  apply tsum_eq_single 0
+  · intro a ha
+    rcases a with _ | _ | a
+    · contradiction
+    · simp
+    · simp
 
+lemma safe_chaining_example_resultB : safe_chaining_example "Result B" = 1/2 := by
+  unfold safe_chaining_example safe_index_dist strict_list_access
+  simp_all
+  apply tsum_eq_single 1
+  · intro a ha
+    rcases a with _ | _ | a
+    · simp
+    · contradiction
+    · simp
 
-  sorry
+end Phase1
 
+section Phase2
 /-!
   ### Phase 2: Formalizing and Analyzing a More Complex Randomized Algorithm
 
@@ -245,15 +260,144 @@ lemma safe_chaining_example_result : safe_chaining_example "Result A" = 1/2 := b
 
   Algorithm:
     1. If the list is empty, return the empty list.
-    2. Otherwise, select a pivot element p from the list uniformly at random.
-    3. Partition the remaining elements into two sublists:
+    2. If the list has one element, return the list itself (it is already sorted).
+    3. Otherwise, select a pivot element p from the list uniformly at random.
+    4. Partition the remaining elements into two sublists:
         - L₁ = {x ∈ L | x < p}
         - L₂ = {x ∈ L | x ≥ p}
         by doing one traversal of the list, comparing each element to the pivot
         and placing it in the appropriate sublist.
-    4. Recursively apply quicksort to L₁ and L₂ to obtain sorted sublists S₁ and S₂.
-    5. Return the concatenation of S₁, [p], and S₂: S₁ ++ [p] ++ S₂.
+    5. Recursively apply quicksort to L₁ and L₂ to obtain sorted sublists S₁ and S₂.
+    6. Return the concatenation of S₁, [p], and S₂: S₁ ++ [p] ++ S₂.
 
+  We first implement the algorithm not randomized: QuickSort_NR
+  where S = ℕ for simplicity and the pivot is always the
+  first element of the list.
+-/
+
+def QuickSort_NR : List ℕ → List ℕ := fun
+| [] => []
+| pivot :: tail =>
+  let L1 := tail.filter (fun x => x < pivot)
+  let L2 := tail.filter (fun x => x ≥ pivot)
+  have h1 : L1.length < (pivot :: tail).length := by
+    apply Nat.lt_succ_of_le
+    apply List.length_filter_le
+  have h2 : L2.length < (pivot :: tail).length := by
+    apply Nat.lt_succ_of_le
+    apply List.length_filter_le
+  let S1 := QuickSort_NR L1
+  let S2 := QuickSort_NR L2
+  S1 ++ [pivot] ++ S2
+  termination_by L => L.length
+  decreasing_by
+  all_goals grind
+
+#eval QuickSort_NR [3, 1, 4, 1, 5, 9, 2, 6]
+
+/-
+Now we can define the randomized version of quicksort,
+where the pivot is selected uniformly at random from
+the list (assuming of course that pseudorandom number
+are uniform random number).
+
+Here since we want to be able to execute/evaluate the code, we
+use the IO monad to generate random numbers, which is different
+than using the PMF monad in the following way:
+
+The IO monad can be visualized as follow:
+
+Let S be the set of all possible configurations of the computer's memory and environment.
+Let α be a type.
+
+IO α consists of functions ("action") of the form S → (α × S).
+
+pure : α → IO α takes a : α and returns a function that takes a state s : S
+and returns the pair (a, s) i.e. (pure a) : S → α × S, s ↦ (a, s).
+
+Bind : IO α → (α → IO β) → IO β takes an IO α action act, and a function f : α → IO β
+and returns a new IO β action that represents the sequential execution of the two actions
+i.e. (act.bind f) : S → β × S, s ↦ (f (act s).1) (act s).2
+-/
+/-!
+To be completely pragmatic: Lean cannot access to these states at all and their underlying
+representation is not existant. It is not a bit string, it is not a memory map, and it
+contains absolutely zero data. It is a trick played on the type checker
+to force it to sequence operations correctly.
+
+We split between what happens when we write
+the code and what happens when you run it:
+
+1. Compile Time: The Phantom Token
+
+In Lean's internal code, the state of the universe S is defined like this:
+'
+opaque IO.RealWorld.nonemptyType : NonemptyType.{0}
+/--
+A representation of “the real world” that's used in `IO` monads to ensure
+that `IO` actions are not reordered.
+-/
+@[expose] def IO.RealWorld : Type := IO.RealWorld.nonemptyType.type
+'
+What is missing: there is no = sign, no data structures, and no bit strings.
+It is an opaque type (often called a phantom type).
+We tell the mathematical theorem prover that a set called RealWorld exists,
+but we intentionally refuse to define what its elements look like.
+
+Because it is opaque, it is mathematically impossible for Lean to
+write a pure function that opens up a RealWorld token to "look" at the data
+inside. If you cannot look at it, you cannot write mathematical proofs that
+depend on it.
+
+Its only job is to act as a dependency baton.
+If Step B requires the phantom token produced by Step A,
+Lean's type checker is forced to put Step A before Step B
+altough there is no actual data being passed around. This is
+kinda a syntactical trick to play with Lean's compiler
+rules and here for the IO monad it is used to enforce the correct
+sequencing of IO operations.
+
+2. Runtime: Type Erasure
+
+If the token contains no data, what actually happens when we run a code with a phantom type ?
+- Lean compiles down to C code and during this translation, the Lean
+  compiler performs Type Erasure. Because the phantom type contains no concrete
+  data and is mathematically irrelevant to the final computed values,
+  the compiler simply deletes it.
+
+  The mathematically pure, deeply nested bind functions that pass a dummy
+  token around are stripped away, leaving behind raw, imperative C code.
+
+  When your Lean code says IO.rand 0 10, the generated C code does not pass
+  a universe token. It literally just calls the underlying C/C++ runtime
+  function to ask the operating system for a random number.
+-/
+/-
+We use the key word "Partial" because the function
+is not structurally recursive anymore due to the
+random pivot selection and proving termination
+through monadic bind operations is complex and
+mathematically heavy.
+-/
+
+partial def QuickSortRand : List ℕ → IO (List ℕ)
+| [] => pure []
+| L => do
+  let idx <- IO.rand 0 (L.length - 1)
+  let pivot := (L[idx]?).getD 0
+  /-
+  We do this except handling (if idx is within bound then , otherwise we take )
+  to satisfy the type checker, so that we avoid proving that idx is within the bounds,
+  but we know idx is always valid since it is generated in the correct range.
+  -/
+  let rest := L.eraseIdx idx
+  let L1 := rest.filter (fun x => x < pivot)
+  let L2 := rest.filter (fun x => x ≥ pivot)
+  let S1 ← QuickSortRand L1
+  let S2 ← QuickSortRand L2
+  pure (S1 ++ [pivot] ++ S2)
+
+/-
   We can then analyze the probability of certain events
   (e.g. "the pivot is the smallest element") using the PMF monad.
 
@@ -265,5 +409,21 @@ lemma safe_chaining_example_result : safe_chaining_example "Result A" = 1/2 := b
     chain the pivot selection and the recursive calls on the sublists.
 -/
 
+
+def QuickSort_analysed : List ℕ → PMF (List ℕ) := fun
+| [] => PMF.pure []
+| L => do
+  -- Step 1: Select a pivot uniformly at random from the list
+  let pivot_dist := PMF.uniformOfFinset (L.toFinset) (by simp)
+  pivot_dist.bind fun pivot =>
+    let L₁ := L.filter (fun x => x < pivot)
+    let L₂ := L.filter (fun x => x ≥ pivot)
+    do
+      let S₁ ← QuickSort L₁
+      let S₂ ← QuickSort L₂
+      pure (S₁ ++ [pivot] ++ S₂)
+
+
+end Phase2
 
 end ARA
