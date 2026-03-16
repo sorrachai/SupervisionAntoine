@@ -406,8 +406,8 @@ partial def QuickSort_Rand : List ℕ → IO (List ℕ)
   How do we proceed:
 
   - Given a list L ≠ [], we want to bind the pivot distribution P (a distribution over ℕ with finite support)
-    with the function f that takes any pivot and returns the pure distribution of the sorted list given
-    that pivot. The problem is that the pivot can be out of bounds and we cannot prove that it is not, so we
+    with the function f (defined recursively) that takes any pivot and returns the pure distribution of the
+    sorted list given that pivot. The problem is that the pivot can be out of bounds and we cannot prove that it is not, so we
     cannot directly use bind. We can however use bindOnSupport! Since the pivot distribution is supported on L,
     we can prove that any pivot drawn from it (with positive probability) is in L and thus the function f is
     well defined on the support of the pivot distribution.
@@ -424,15 +424,13 @@ partial def QuickSort_Rand : List ℕ → IO (List ℕ)
       PMF.pure (S1 ++ [pivot] ++ S2)
 
 -/
-
 noncomputable def QuickSort_A : List ℕ → PMF (List ℕ) := fun
 | [] => PMF.pure []
-| head::tail => do
+| L@(head::tail) => do
   -- Step 1: Select a pivot uniformly at random from the list,
   -- this amount choosing a random index between 0 and L.length - 1.
-  let L := head::tail
   have : Nonempty (Fin L.length) := by
-    simp [L]
+
     exact ⟨⟨0, by omega⟩⟩
   let idx_pivot_dist := PMF.uniformOfFintype (Fin L.length)
 
@@ -446,7 +444,7 @@ noncomputable def QuickSort_A : List ℕ → PMF (List ℕ) := fun
     do
       let S1 ← QuickSort_A L1
       let S2 ← QuickSort_A L2
-      PMF.pure (S1 ++ [pivot] ++ S2))
+      return (S1 ++ [pivot] ++ S2))
   termination_by L => L.length
   decreasing_by
   all_goals
@@ -473,50 +471,156 @@ lemma prob_quicksort_empty : QuickSort_A [] [] = 1 := by
   with probability 1.
 -/
 lemma prob_quicksort_singleton (n : ℕ) : QuickSort_A [n] [n] = 1 := by
-  -- The distribution of indices for a length 1 list is just {0}.
-  -- Erasing index 0 leaves [], which filters to [] and [].
-  -- The recursive calls return pure [], resulting in pure ([] ++ [n] ++ []).
+  -- The uniform distribution over Fin 1 is just pure 0 (there is only one index)
+  have hbase : QuickSort_A [] = PMF.pure [] := by
+    unfold QuickSort_A
+    rfl
+  have hunif : PMF.uniformOfFintype (Fin 1) = PMF.pure (0 : Fin 1) := by
+    ext a
+    have ha : a = 0 := Fin.ext (by omega)
+    subst ha
+    simp [PMF.uniformOfFintype_apply]
   unfold QuickSort_A
-  simp_all
-
-  apply PMF.bindOnSupport_apply
-  apply tsum_eq_single (0 : Fin 1)
-  simp [QuickSort_A, PMF.pure]q
-
-
+  simp only [List.length_singleton]
+  rw [hunif]
+  sorry
 
 /-
 Now we can analyze the probability of certain events.
-Lets start slowly by proving that the first pivot is a minimum
-element of the list is 1/L.length, since the pivot is chosen
-uniformly at random from the list (this is trivial).
+Lets start slowly by proving that the probability that the first pivot selected
+is any particular element is 1/L.length, since the pivot index is chosen
+uniformly at random from Fin L.length (this is trivial).
 -/
-
 lemma prob_first_pivot_is_min :
-∀ L : List ℕ, L ≠ [] → QuickSort_A L (L.min' (by simp)) = 1 / (L.length : ENNReal) := by
-  intro L hL
-  unfold QuickSort_A
-  simp
-  have : Nonempty (Fin L.length) := by
-    simp [L]
-    exact ⟨⟨0, by omega⟩⟩
-  rw [PMF.bindOnSupport_apply]
-  simp
-  apply tsum_eq_single (Fin.findIdx (L.min' (by simp)) _)
-  · intro a ha
-    rcases a with ⟨i, hi⟩ | a
-    · simp at hi
-      rw [hi]
-      simp
-    · simp at ha
-      contradiction
+∀ (L : List ℕ), L ≠ [] → ∀ (i : Fin L.length),
+  PMF.uniformOfFintype (Fin L.length) i = 1 / (L.length : ENNReal) := by
+  intro L hL i
+  have hpos : 0 < L.length := by
+    cases L with
+    | nil => exact absurd rfl hL
+    | cons _ _ => simp
+  haveI : Nonempty (Fin L.length) := ⟨⟨0, hpos⟩⟩
+  rw [PMF.uniformOfFintype_apply, Fintype.card_fin, one_div]
+
 
 /-
 An example more complicate would be
 -/
 
 
+-- sorted array correctness, state the claim: running time that is O(nlog(n)) mybe do running time isnide the funciton use time monad, import CS lib
+
 
 end Phase2
+
+section phase3
+/-
+Essentially, if we fix multiple random variables and an algorithm that uses them,
+we want to model the entire execution of the algorithm and at the end be able to
+prove bounds on the probability of certain events (e.g. "the algorithm returns the wrong answer")
+prove bounds on the expected running time of the algorithm (so a cost function)
+prove bounds on the probability of certain events happening within a certain time bound
+(e.g. "the algorithm returns the wrong answer within 100 steps"). Things like this.
+-/
+
+
+/-
+A nice thing to have would be that we can specify a randomized algorithm in pseudo code
+and then analyze each of its branch very easily.
+-/
+
+
+/-
+
+Ideal goal:
+
+Would it have been possible to first define the quicksort algorithm without other quantity and
+then after putting a function like probability (quicksort pivot a ) ? Like is it possible to
+have a funciton f that is our algorithm (other representaation of algorithm could be
+a state machie, or a recurrence relation, or a pseudo code, or a flowchart, or a program in a programming language,
+or even a mathematical object like a function from lists to lists) and then somehow have a genrela function
+running time (f) that gives us the running time of f and a function probability (f) that gives us the
+probability distribution over outputs of f ? Maybe this is too ambitious but it would be interesting to
+see if we can have a general framework for writing such f sufficiently expressive to be able to represent
+a wide variety of algorithms, sufficently restraint for hoping a "simple" existence of general functions
+that allows us to take any such algorithm written in this framework and then automatically extract
+from it the probability distribution over outputs and the running time distribution.
+This would be a very powerful tool for analyzing randomized algorithms, as it would allow us
+to work with them in a more intuitive way (e.g. writing them in pseudo code) and then automatically get the
+formal properties we want to prove.
+
+So we want to build this framework, we need to look at general representations of algorithms and
+how to extract from them the probability distribution over outputs and the running time distribution.
+
+Algorithm decomposes into steps, in which we should be able at each step: the probability distribution
+over outputs of that step and the running time distribution of that step.
+
+
+Then we can compose these steps together to get the overall probability distribution over outputs and the overall running time distribution.
+We also need to look at how to represent the state of the algorithm and how to model the transitions between states. This is a very ambitious goal, but it would be a very powerful tool for analyzing randomized algorithms.
+
+-/
+
+
+/-
+We should also be able handle and distinguishe non-termination
+observation failures and error states.
+-/
+
+/-
+A nice thing would be to potentially mixing continuous and discrete dis-
+tributions.
+-/
+
+
+/-
+  NOTE ON RUNNING TIME:
+  The standard `PMF` monad tracks probability mass but not computational cost (running time).
+  In "Phase 2: Framework Construction", we will extend this to a custom `Rnd` monad
+  that pairs the probability space with a cost accumulator (WriterT Cost PMF), allowing
+  formal bounds on time complexity alongside probability.
+-/
+
+/-
+There are various approaches for reasoning about randomized algorithms in a
+formal way. Analogously to the non-randomized setting described in Sect. 2,
+there again exists an entire spectrum of diﬀerent approaches:
+– fully explicit/deeply-embedded approaches
+– “no embedding” approaches that model randomized algorithms directly in the
+logic as functions returning a probability distribution
+– shallow embeddings, e.g. with shallow deterministic operations but explicit
+random choice and explicit “while” loops. Examples are the approaches by
+Petcher and Morrisett [165] in Coq and by Kaminski et al. [110] on paper
+(which was formalized by Hölzl [105]).
+– combined approaches that start with a program in a deeply-embedded prob-
+abilistic programming language and then relate it to a distribution specified
+directly in the logic, cf. e.g. Tassarotti and Harper [188].
+
+The ideal would be no embedings.
+-/
+
+/-
+Directly in the Logic (No Embedding). As was mentioned before, many
+ITPs oﬀer functionality to define algorithms directly in the logic of the system
+– usually functionally. This approach is more flexible since algorithms can use
+the full expressiveness of the system’s logic and not only some fixed restricted
+set of language constructs. One possible drawback of this approach is that it
+can be diﬃcult or even impossible to reason about notions such as running time
+explicitly. A possible workaround is to define an explicit cost function for the
+algorithm, but since there is no formal connection between that function and
+the algorithm, one must check by inspection that the cost function really does
+correspond to the incurred cost. Another disadvantage is that, as was said earlier,
+most logics do not have builtin support for imperative algorithms.
+-/
+
+/-
+Hybrids between these two approaches also exist (such as shallow embed-
+dings). And, of course, the diﬀerent approaches can be combined to reap the
+advantages of all of them; e.g. one can show a correspondence between the run-
+ning time of a deeply-embedded algorithm and a cost function specified as a
+recurrence directly in the logic, so that results obtained about the latter have a
+formal connection to the former.
+-/
+end phase3
 
 end ARA
