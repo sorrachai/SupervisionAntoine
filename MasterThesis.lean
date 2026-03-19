@@ -430,8 +430,8 @@ noncomputable def QuickSort_A : List ℕ → PMF (List ℕ) := fun
   -- Step 1: Select a pivot uniformly at random from the list,
   -- this amount choosing a random index between 0 and L.length - 1.
   have : Nonempty (Fin L.length) := by
-
-    exact ⟨⟨0, by omega⟩⟩
+    rename_i h
+    exact ⟨⟨0, by grind only [= List.length_cons]⟩⟩
   let idx_pivot_dist := PMF.uniformOfFintype (Fin L.length)
 
   -- Step 2: Partitioning step function (together with the bindOnSupport operation)
@@ -453,7 +453,7 @@ noncomputable def QuickSort_A : List ℕ → PMF (List ℕ) := fun
       grind
     apply Nat.lt_of_le_of_lt
     · apply List.length_filter_le
-    · exact h_rest
+    · grind
 
 -- Now we can analyze the probability of certain events.
 /--
@@ -486,29 +486,32 @@ lemma prob_quicksort_singleton (n : ℕ) : QuickSort_A [n] [n] = 1 := by
   sorry
 
 /-
-Now we can analyze the probability of certain events.
-Lets start slowly by proving that the probability that the first pivot selected
-is any particular element is 1/L.length, since the pivot index is chosen
-uniformly at random from Fin L.length (this is trivial).
+  Lemma: The probability that QuickSort_A on a list of two distinct elements
+  returns the sorted list is exactly 1 (100%).
 -/
-lemma prob_first_pivot_is_min :
-∀ (L : List ℕ), L ≠ [] → ∀ (i : Fin L.length),
-  PMF.uniformOfFintype (Fin L.length) i = 1 / (L.length : ENNReal) := by
-  intro L hL i
-  have hpos : 0 < L.length := by
-    cases L with
-    | nil => exact absurd rfl hL
-    | cons _ _ => simp
-  haveI : Nonempty (Fin L.length) := ⟨⟨0, hpos⟩⟩
-  rw [PMF.uniformOfFintype_apply, Fintype.card_fin, one_div]
+lemma prob_quicksort_two_distinct (a b : ℕ) (h : a ≠ b) : QuickSort_A [a, b] [min a b, max a b] = 1 := by
+  -- The uniform distribution over Fin 2 assigns probability 1/2 to each index.
+  have hunif : PMF.uniformOfFintype (Fin 2) = PMF.uniformOfFinset {0, 1} (by simp) := by sorry
+  unfold QuickSort_A
+  simp only [List.length_cons]
+  simp_all
+  rw [hunif]
+  sorry
+
 
 
 /-
-An example more complicate would be
+A more difficult example would be:
+- Correctness: The probability that QuickSort_A on a list of two distinct elements
+  returns the sorted list is 1 (100%).
+
+An even more difficult example would be:
+- Complexity: The expected running time of QuickSort_A on a list of n
+distinct elements is O(n log n).  mybe do running time isnide the funciton use time monad, import CS lib
 -/
 
 
--- sorted array correctness, state the claim: running time that is O(nlog(n)) mybe do running time isnide the funciton use time monad, import CS lib
+
 
 
 end Phase2
