@@ -5,8 +5,8 @@ import Mathlib.Data.Rat.Defs
 import Mathlib.Probability.Distributions.Uniform
 import Mathlib.Data.Fintype.Basic
 import Mathlib.Data.Fin.Basic
-import Mathlib.Tactic
-import Cslib.Algorithms.Lean.TimeM
+import Mathlib.Tactic.Basic
+
 
 /-
   Framework for analysis of randomized algorithm.
@@ -571,24 +571,6 @@ lemma prob_quicksort_two_distinct (a b : ℕ) (h : a ≠ b) : QuickSort_A [a, b]
 -- prove about randomized algorithms, and this tediousness motivates why we want
 -- to have a more general framework for analyzing them.
 
-
-/-
-Correctness: The probability that QuickSort_A on a list of two distinct elements
-returns the sorted list is 1 (100%).
--/
-lemma correctness_quicksort :
-  ∀ (L : List ℕ), QuickSort_A L (List.sort L) = 1 := by
-  sorry
-
-
-/-
-Complexity: The expected running time of QuickSort_A on a list of n
-distinct elements is O(n log n).  mybe do running time isnide the funciton use time monad, import CS lib
--/
-lemma complexity_quicksort :
-  ∀ (L : List ℕ), -- QuickSort_A L has expected running time O(L.length * log L.length) := by
-  sorry
-
 end Phase2
 
 section phase3
@@ -614,7 +596,7 @@ To address these problems, we would like to first restrict ourselves to finite
 probability distributions, so that we can work with finite sums and avoid the
 complications of infinite sums. This would allow us to use already existing
 theorems about finite sums and even algebra automated reasoner
-(for e.g. ring_nf, omega, etc.) to manipulate them more easily.
+(for e.g. ring_nf, omega, linarith, bound etc.) to manipulate them more easily.
 -/
 
 /-
