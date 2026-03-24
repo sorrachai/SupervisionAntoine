@@ -6,6 +6,7 @@ import Mathlib.Probability.Distributions.Uniform
 import Mathlib.Data.Fintype.Basic
 import Mathlib.Data.Fin.Basic
 import Mathlib.Tactic
+import Cslib.Algorithms.Lean.TimeM
 
 /-
   Framework for analysis of randomized algorithm.
@@ -59,20 +60,6 @@ namespace ARA
 
 open PMF
 
-/--
-  A simple coin flip modeled as a Bernoulli trial with parameter p=1/2.
-  This corresponds to the simplest randomized algorithm primitive.
--/
-noncomputable def coin_flip : PMF Bool := PMF.bernoulli (1/2 : NNReal) (by norm_num)
-
-/--
-  Theorem: The probability of obtaining Heads (true) in a fair coin flip is exactly 1/2.
-  This demonstrates the "rapid, multi-line verification of probability bounds" goal.
--/
-theorem coin_flip_prob_heads : coin_flip true = 1/2 := by
-  -- Unfold the definition of coin_flip and apply Bernoulli properties
-  simp [coin_flip, PMF.bernoulli_apply]
-
 section Phase1
 /-!
   ### Phase 1: Basic Probability Manipulation and familiarisation with PMF
@@ -93,6 +80,19 @@ section Phase1
   - Path 1: P(Heads) * P(d6=k) = 1/2 * 1/6
   - Path 2: P(Tails) * P(d20=k) = 1/2 * 1/20
 -/
+/--
+  First we model a simple coin flip modeled as a Bernoulli trial with parameter p=1/2.
+  This corresponds to the simplest randomized algorithm primitive.
+-/
+noncomputable def coin_flip : PMF Bool := PMF.bernoulli (1/2 : NNReal) (by norm_num)
+
+/--
+  lemma: The probability of obtaining Heads (true) in a fair coin flip is exactly 1/2.
+  This demonstrates the "rapid, multi-line verification of probability bounds" goal.
+-/
+lemma coin_flip_prob_heads : coin_flip true = 1/2 := by
+  -- Unfold the definition of coin_flip and apply Bernoulli properties
+  simp [coin_flip, PMF.bernoulli_apply]
 
 noncomputable def d6 : PMF (Fin 6) := PMF.uniformOfFintype (Fin 6)
 noncomputable def d20 : PMF (Fin 20) := PMF.uniformOfFintype (Fin 20)
@@ -454,6 +454,9 @@ noncomputable def QuickSort_A : List ℕ → PMF (List ℕ) := fun
     apply Nat.lt_of_le_of_lt
     · apply List.length_filter_le
     · grind
+-- The definition is surprisingly natural and almost feels like
+-- writing the algorithm in pseudo code: so good point.
+
 
 -- Now we can analyze the probability of certain events.
 /--
@@ -471,10 +474,8 @@ lemma prob_quicksort_empty : QuickSort_A [] [] = 1 := by
   with probability 1.
 -/
 lemma prob_quicksort_singleton (n : ℕ) : QuickSort_A [n] [n] = 1 := by
-  -- The uniform distribution over Fin 1 is just pure 0 (there is only one index)
-  have hbase : QuickSort_A [] = PMF.pure [] := by
-    unfold QuickSort_A
-    rfl
+-- The pivot distribution is uniform over the single element list,
+-- so it is just the Dirac distribution on that element.
   have hunif : PMF.uniformOfFintype (Fin 1) = PMF.pure (0 : Fin 1) := by
     ext a
     have ha : a = 0 := Fin.ext (by omega)
@@ -483,29 +484,144 @@ lemma prob_quicksort_singleton (n : ℕ) : QuickSort_A [n] [n] = 1 := by
   unfold QuickSort_A
   simp only [List.length_singleton]
   rw [hunif]
-  sorry
+  rw [PMF.pure_bindOnSupport]
+-- The function we bind with is the one that takes the pivot
+-- and returns the sorted list, which in this case is just
+-- the identity function on [n].
+  have hdet : (do let S1 ← PMF.pure []; PMF.pure (S1 ++ [n])) [n] = 1 := by
+    change ((PMF.pure []).bind (fun S1 => PMF.pure (S1 ++ [n]))) [n] = 1
+    simp
+  simpa [QuickSort_A, Functor.map] using hdet
+-- This was tedious and absolutely non natural (did it with a local agent).
+
 
 /-
   Lemma: The probability that QuickSort_A on a list of two distinct elements
   returns the sorted list is exactly 1 (100%).
 -/
 lemma prob_quicksort_two_distinct (a b : ℕ) (h : a ≠ b) : QuickSort_A [a, b] [min a b, max a b] = 1 := by
-  -- The uniform distribution over Fin 2 assigns probability 1/2 to each index.
-  have hunif : PMF.uniformOfFintype (Fin 2) = PMF.uniformOfFinset {0, 1} (by simp) := by sorry
-  unfold QuickSort_A
-  simp only [List.length_cons]
-  simp_all
-  rw [hunif]
-  sorry
-
+  by_cases hab : a < b
+  · have hmin : min a b = a := Nat.min_eq_left (Nat.le_of_lt hab)
+    have hmax : max a b = b := Nat.max_eq_right (Nat.le_of_lt hab)
+    have hnot : ¬ b < a := Nat.not_lt.mpr (Nat.le_of_lt hab)
+    have hfilter : List.filter (fun x => decide (a ≤ x)) [b] = [b] := by
+      simp [Nat.le_of_lt hab]
+    have hrec : QuickSort_A (List.filter (fun x => decide (a ≤ x)) [b]) [b] = 1 := by
+      simpa [hfilter] using prob_quicksort_singleton b
+    have ht :
+        (do
+            let S1 ← PMF.pure []
+            let a_1 ← PMF.pure []
+            (fun a_2 => S1 ++ a :: (a_1 ++ b :: a_2)) <$> PMF.pure []) [a, b] = 1 := by
+      simp [Functor.map]
+      change
+        ((PMF.pure []).bind
+          (fun S1 => (PMF.pure []).bind (fun a_1 => PMF.pure (S1 ++ a :: (a_1 ++ [b])))))
+          [a, b] = 1
+      simp
+    simp [QuickSort_A, PMF.bindOnSupport_eq_bind, hab, hnot, hmin, hmax, hfilter]
+    set t : ENNReal :=
+      (do
+          let S1 ← PMF.pure []
+          let a_1 ← PMF.pure []
+          (fun a_2 => S1 ++ a :: (a_1 ++ b :: a_2)) <$> PMF.pure []) [a, b]
+    have ht' : t = 1 := by
+      simpa [t] using ht
+    calc
+      (2⁻¹ : ENNReal) * t + (2⁻¹ : ENNReal) * t = (2⁻¹ : ENNReal) * 1 + (2⁻¹ : ENNReal) * 1 := by
+        simp [ht']
+      _ = 1 := by
+        simpa [mul_one] using
+          (ENNReal.inv_two_add_inv_two : ((2 : ENNReal)⁻¹ + (2 : ENNReal)⁻¹ = 1))
+  · have hba : b < a := lt_of_le_of_ne (Nat.le_of_not_gt hab) (Ne.symm h)
+    have hmin : min a b = b := Nat.min_eq_right (Nat.le_of_lt hba)
+    have hmax : max a b = a := Nat.max_eq_left (Nat.le_of_lt hba)
+    have hnot : ¬ a < b := hab
+    have hfilter : List.filter (fun x => decide (b ≤ x)) [a] = [a] := by
+      simp [Nat.le_of_lt hba]
+    have hrec : QuickSort_A (List.filter (fun x => decide (b ≤ x)) [a]) [a] = 1 := by
+      simpa [hfilter] using prob_quicksort_singleton a
+    have ht :
+        (do
+            let x ← PMF.pure []
+            let a_1 ← PMF.pure []
+            (fun a_2 => x ++ b :: (a_1 ++ a :: a_2)) <$> PMF.pure []) [b, a] = 1 := by
+      simp [Functor.map]
+      change
+        ((PMF.pure []).bind
+          (fun x => (PMF.pure []).bind (fun a_1 => PMF.pure (x ++ b :: (a_1 ++ [a])))))
+          [b, a] = 1
+      simp
+    simp [QuickSort_A, PMF.bindOnSupport_eq_bind, hba, hnot, hmin, hmax, hfilter]
+    set t : ENNReal :=
+      (do
+          let x ← PMF.pure []
+          let a_1 ← PMF.pure []
+          (fun a_2 => x ++ b :: (a_1 ++ a :: a_2)) <$> PMF.pure []) [b, a]
+    have ht' : t = 1 := by
+      simpa [t] using ht
+    calc
+      (2⁻¹ : ENNReal) * t + (2⁻¹ : ENNReal) * t = (2⁻¹ : ENNReal) * 1 + (2⁻¹ : ENNReal) * 1 := by
+        simp [ht']
+      _ = 1 := by
+        simpa [mul_one] using
+          (ENNReal.inv_two_add_inv_two : ((2 : ENNReal)⁻¹ + (2 : ENNReal)⁻¹ = 1))
+-- This was absolutely non natural and very tedious (did it with a local agent),
+-- but it is a good example of the kind of properties we want to be able to
+-- prove about randomized algorithms, and this tediousness motivates why we want
+-- to have a more general framework for analyzing them.
 
 
 /-
-A more difficult example would be:
+Correctness: The probability that QuickSort_A on a list of two distinct elements
+returns the sorted list is 1 (100%).
+-/
+lemma correctness_quicksort :
+  ∀ (L : List ℕ), QuickSort_A L (List.sort L) = 1 := by
+  sorry
+
+
+/-
+Complexity: The expected running time of QuickSort_A on a list of n
+distinct elements is O(n log n).  mybe do running time isnide the funciton use time monad, import CS lib
+-/
+lemma complexity_quicksort :
+  ∀ (L : List ℕ), -- QuickSort_A L has expected running time O(L.length * log L.length) := by
+  sorry
+
+end Phase2
+
+section phase3
+/-!
+  ### Phase 3: Towards a General Framework for Analyzing Randomized Algorithms
+As seen in phase2, some properties of randomized algorithms can be proved.
+These proofs are very non natural because:
+
+- They do not look like the proofs we would have done on paper or in an informal way.
+- They are very tedious to write.
+- They require a lot of low level details about PMF which makes them very hard to read
+  and understand.
+
+Additionnaly there is other problems like:
+- The proofs are very specific to the algorithm and the property we want to prove,
+  so we cannot reuse any of the work done in one proof for another proof.
+- Sums are hard to manipulate because they are infinitely countable ones as PMF is
+  implemented as a function from the type in question to ENNReal such that the
+  values have (infinite) sum equal to 1, so we have to use theorems about sums
+  and series that are not very convenient to work with.
+
+To address these problems, we would like to first restrict ourselves to finite
+probability distributions, so that we can work with finite sums and avoid the
+complications of infinite sums. This would allow us to use already existing
+theorems about finite sums and even algebra automated reasoner
+(for e.g. ring_nf, omega, etc.) to manipulate them more easily.
+-/
+
+/-
+One first goal would be to prove the most important properties of quicksort, such as:
 - Correctness: The probability that QuickSort_A on a list of two distinct elements
   returns the sorted list is 1 (100%).
 
-An even more difficult example would be:
 - Complexity: The expected running time of QuickSort_A on a list of n
 distinct elements is O(n log n).  mybe do running time isnide the funciton use time monad, import CS lib
 -/
@@ -513,10 +629,6 @@ distinct elements is O(n log n).  mybe do running time isnide the funciton use t
 
 
 
-
-end Phase2
-
-section phase3
 /-
 Essentially, if we fix multiple random variables and an algorithm that uses them,
 we want to model the entire execution of the algorithm and at the end be able to
