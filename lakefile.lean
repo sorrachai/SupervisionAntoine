@@ -7,8 +7,6 @@ package "MasterThesis" where
 require mathlib from git
   "https://github.com/leanprover-community/mathlib4.git" @ "v4.27.0"
 
-require cslib from git "https://github.com/leanprover/cslib" @ "main"
-
 lean_lib «MasterThesis» where
   -- add library configuration options here
 
