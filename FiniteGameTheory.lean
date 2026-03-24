@@ -76,51 +76,33 @@ theorem zermelo (g : Game) : has_winning_strategy one g ∨ has_winning_strategy
     cases turn
 
     -- Sub-case 2.A: It is Player 1's turn.
-    ·
-      -- Use of the law of excluded middle: Either 1 has a winning move or doesn't.
+    · -- Use of the law of excluded middle: Either 1 has a winning move or doesn't.
       by_cases h : ∃ m, has_winning_strategy one (moves m)
       · left      -- If they have a winning move, Player 1 wins (trivial case).
         exact h
       · right     -- If not, Player 2 wins. Here is the proof:
         intro m   -- "No matter what move `m` Player 1 attempts..."
         -- We look at the induction hypothesis for this specific move `m`.
-        cases ih m with
-        | inl w1 =>
-          -- This is impossible. If 1 won here, `h` would have been true above.
-          exfalso
-          exact h ⟨m, w1⟩
-        | inr w2 =>
-          -- So it must be that 2 has the winning strategy for this sub-game.
-          exact w2
+        specialize ih m
+        grind
 
     -- Sub-case 2.B: It is Player 2's turn (The logic is exactly reversed).
-    ·
-      by_cases h : ∃ m, has_winning_strategy two (moves m)
+    · by_cases h : ∃ m, has_winning_strategy two (moves m)
       · right
         exact h
       · left
         intro m
-        cases ih m with
-        | inl w1 =>
-          exact w1
-        | inr w2 =>
-          exfalso
-          exact h ⟨m, w2⟩
-
+        specialize ih m
+        grind
 
 -- We can also add that both players cannot have a winning strategy at the same time.
+-- This is proved by induction on the game tree: at each node, a witness move
+-- for one player's existential strategy conflicts with the opponent's universal strategy.
 lemma no_both_players_win (g : Game) : ¬ (has_winning_strategy one g ∧ has_winning_strategy two g) := by
   induction g with
   | leaf winner =>
-    cases winner
-    · intro h
-      cases h with
-      | intro _ h2 =>
-        cases h2
-    · intro h
-      cases h with
-      | intro h1 _ =>
-        cases h1
+    unfold has_winning_strategy at *
+    grind
   | node turn α moves ih =>
     cases turn
     · intro h
