@@ -573,7 +573,7 @@ lemma prob_quicksort_two_distinct (a b : ℕ) (h : a ≠ b) : QuickSort_A [a, b]
 
 end Phase2
 
-section phase3
+section Phase3
 /-!
   ### Phase 3: Towards a General Framework for Analyzing Randomized Algorithms
 As seen in phase2, some properties of randomized algorithms can be proved.
@@ -602,8 +602,10 @@ To address these problems, there is multiple approaches we could take & combine.
 
 - 2. Grind implementation; we would like to identify the right lemmas to bypass ENNreal
     complication and make them accessible to the grind tactic.
-
 -/
+
+
+
 
 
 /-
@@ -723,6 +725,6 @@ ning time of a deeply-embedded algorithm and a cost function specified as a
 recurrence directly in the logic, so that results obtained about the latter have a
 formal connection to the former.
 -/
-end phase3
+end Phase3
 
 end ARA
