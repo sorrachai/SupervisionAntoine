@@ -6,8 +6,7 @@ import Mathlib.Probability.Distributions.Uniform
 import Mathlib.Data.Fintype.Basic
 import Mathlib.Data.Fin.Basic
 import Mathlib.Tactic.Basic
-
-import ARAHelpers
+import Mathlib
 
 /-
   Framework for analysis of randomized algorithm.
@@ -1114,6 +1113,85 @@ Since every branch of the bindOnSupport produces PMF.pure (mergeSort L), the who
 Key lemmas to use: partition_sort_eq_mergeSort, List.mergeSort_nil, PMF.pure_bindOnSupport, PMF.pure_bind.
 -/
 
+/-!
+# Helper lemmas for QuickSort correctness proof
+-/
+
+open List
+
+/-! ### Permutation lemma: eraseIdx gives back a permutation -/
+
+lemma perm_getElem_cons_eraseIdx (L : List ℕ) (i : Fin L.length) :
+    L.Perm (L[i] :: L.eraseIdx i) := by
+  induction' i with i ih;
+  induction' L with hd tl ih generalizing i ; aesop;
+  rcases i with ( _ | i ) <;> simp_all +decide [ List.eraseIdx ];
+  exact List.Perm.trans ( List.Perm.cons _ ( ih _ <| by simpa using ‹i + 1 < List.length ( hd :: tl ) › ) ) ( List.Perm.swap .. )
+
+/-! ### Filter partition gives a permutation -/
+
+lemma filter_partition_perm (rest : List ℕ) (pivot : ℕ) :
+    (rest.filter (fun x => decide (x < pivot)) ++
+     rest.filter (fun x => decide (x ≥ pivot))).Perm rest := by
+  convert List.filter_append_perm _ _ using 1;
+  congr! 2;
+  grind
+
+/-! ### The partition-sort-concat is a permutation of the original list -/
+
+lemma partition_sort_concat_perm (L : List ℕ) (i : Fin L.length) :
+    let pivot := L[i]
+    let rest := L.eraseIdx i
+    let L1 := rest.filter (fun x => decide (x < pivot))
+    let L2 := rest.filter (fun x => decide (x ≥ pivot))
+    (L1.mergeSort ++ [pivot] ++ L2.mergeSort).Perm L := by
+  -- By transitivity of permutations, we can chain these steps together.
+  have h_chain : List.Perm (List.mergeSort (List.filter (fun x => x < L[i]) (L.eraseIdx i)) (fun a b => decide (a ≤ b)) ++ [L[i]] ++ List.mergeSort (List.filter (fun x => x ≥ L[i]) (L.eraseIdx i)) (fun a b => decide (a ≤ b))) (List.filter (fun x => x < L[i]) (L.eraseIdx i) ++ [L[i]] ++ List.filter (fun x => x ≥ L[i]) (L.eraseIdx i)) := by
+    apply_rules [ List.Perm.append, List.mergeSort_perm ];
+    rfl;
+  have h_odd_kill : List.Perm (List.filter (fun x => x < L[i]) (L.eraseIdx i) ++ [L[i]] ++ List.filter (fun x => x ≥ L[i]) (L.eraseIdx i)) (L[i] :: L.eraseIdx i) := by
+    have h_partition : List.Perm (List.filter (fun x => x < L[i]) (L.eraseIdx i) ++ (List.filter (fun x => x ≥ L[i]) (L.eraseIdx i))) (L.eraseIdx i) := by
+      exact filter_partition_perm (L.eraseIdx ↑i) L[i];
+    grind +splitIndPred;
+  exact h_chain.trans ( h_odd_kill.trans ( perm_getElem_cons_eraseIdx L i |> List.Perm.symm ) )
+
+/-! ### The partition-sort-concat is sorted -/
+
+lemma partition_sort_concat_sorted (L : List ℕ) (i : Fin L.length) :
+    let pivot := L[i]
+    let rest := L.eraseIdx i
+    let L1 := rest.filter (fun x => decide (x < pivot))
+    let L2 := rest.filter (fun x => decide (x ≥ pivot))
+    List.Pairwise (· ≤ ·) (L1.mergeSort ++ [pivot] ++ L2.mergeSort) := by
+  simp +decide [ List.pairwise_append ];
+  -- Apply the fact that mergeSort produces a sorted list.
+  have h_sorted : ∀ (L : List ℕ), List.Pairwise (· ≤ ·) (List.mergeSort L (· ≤ ·)) := by
+    exact fun L => pairwise_mergeSort' (fun x1 x2 => x1 ≤ x2) L;
+  exact ⟨ h_sorted _, h_sorted _, fun a ha ha' => ⟨ le_of_lt ha', fun b hb hb' => by linarith ⟩ ⟩
+
+/-! ### Uniqueness of sorted permutations -/
+
+lemma eq_mergeSort_of_perm_of_sorted (L result : List ℕ)
+    (hperm : result.Perm L) (hsorted : List.Pairwise (· ≤ ·) result) :
+    result = L.mergeSort := by
+  have h_unique : List.Perm result (L.mergeSort (fun a b => decide (a ≤ b))) := by
+    exact hperm.trans ( List.mergeSort_perm _ _ |> List.Perm.symm );
+  apply List.Perm.eq_of_pairwise;
+  any_goals assumption;
+  · exact fun a b ha hb hab hba => le_antisymm hab hba;
+  · exact pairwise_mergeSort' (fun x1 x2 => x1 ≤ x2) L
+
+/-! ### Main partition-sort equality -/
+
+lemma partition_sort_eq_mergeSort (L : List ℕ) (i : Fin L.length) :
+    let pivot := L[i]
+    let rest := L.eraseIdx i
+    let L1 := rest.filter (fun x => decide (x < pivot))
+    let L2 := rest.filter (fun x => decide (x ≥ pivot))
+    L1.mergeSort ++ [pivot] ++ L2.mergeSort = L.mergeSort := by
+  exact eq_mergeSort_of_perm_of_sorted L _ (partition_sort_concat_perm L i) (partition_sort_concat_sorted L i)
+
+
 lemma QuickSort_A_eq_pure_mergeSort (L : List ℕ) :
     QuickSort_A L = PMF.pure (List.mergeSort L) := by
   by_contra h_contra;
@@ -1131,7 +1209,7 @@ lemma QuickSort_A_eq_pure_mergeSort (L : List ℕ) :
     have := h_well_founded.has_min { L : List ℕ | QuickSort_A L ≠ PMF.pure ( L.mergeSort fun x1 x2 => decide ( x1 ≤ x2 ) ) } ⟨ L, hL ⟩;
     exact ⟨ this.choose, this.choose_spec.1, fun L' hL' => Classical.not_not.1 fun hL'' => this.choose_spec.2 L' hL'' hL' ⟩;
   obtain ⟨hL_ne, hL_min⟩ := hL_min;
-  rcases L with ( _ | ⟨ head, tail ⟩ ) <;> simp_all +decide [ List.mergeSort ];
+  rcases L with ( _ | ⟨ head, tail ⟩ ) <;> simp_all +decide;
   · exact hL_ne ( by unfold QuickSort_A; rfl );
   · -- By definition of `QuickSort_A`, we know that `QuickSort_A (head :: tail)` is the bind of the uniform distribution over the indices of `head :: tail` with the function that sorts the list.
     have h_bind : QuickSort_A (head :: tail) = PMF.bindOnSupport (PMF.uniformOfFintype (Fin (head :: tail).length)) (fun idx_pivot h_idx_pivot => PMF.bind (QuickSort_A ((head :: tail).eraseIdx idx_pivot |>.filter (· < (head :: tail)[idx_pivot]))) (fun S1 => PMF.bind (QuickSort_A ((head :: tail).eraseIdx idx_pivot |>.filter (· ≥ (head :: tail)[idx_pivot]))) (fun S2 => PMF.pure (S1 ++ [(head :: tail)[idx_pivot]] ++ S2)))) := by
@@ -1145,7 +1223,7 @@ lemma QuickSort_A_eq_pure_mergeSort (L : List ℕ) :
       intro idx_pivot; exact (by
       convert partition_sort_eq_mergeSort ( head :: tail ) idx_pivot using 1);
     refine' hL_ne _;
-    ext b; simp +decide [ h_filter, h_mergeSort, PMF.pure_apply ] ;
+    ext b; simp +decide [PMF.pure_apply ] ;
     split_ifs <;> simp_all +decide [ PMF.pure_apply ]
 
 /-
@@ -1160,7 +1238,7 @@ lemma Correctness_Quicksort_A (L : List ℕ):
 
 /-!
 One first goal would be to prove the most important properties of quicksort, such as:
-- Correctness: The probability that QuickSort_A on a list of two distinct elements
+- Correctness: The probability that QuickSort_A on any list
   returns the sorted list is 1 (100%).
 
 - Complexity: The expected running time of QuickSort_A on a list of n
@@ -1169,7 +1247,7 @@ distinct elements is O(n log n).  mybe do running time isnide the funciton use t
 
 
 
-Essentially, if we fix multiple random variables and an algorithm that uses them,
+- Essentially, if we fix multiple random variables and an algorithm that uses them,
 we want to model the entire execution of the algorithm and at the end be able to
 prove bounds on the probability of certain events (e.g. "the algorithm returns the wrong answer")
 prove bounds on the expected running time of the algorithm (so a cost function)
@@ -1179,7 +1257,7 @@ prove bounds on the probability of certain events happening within a certain tim
 
 
 
-A nice thing to have would be that we can specify a randomized algorithm in pseudo code
+- A nice thing to have would be that we can specify a randomized algorithm in pseudo code
 and then analyze each of its branch very easily.
 
 
