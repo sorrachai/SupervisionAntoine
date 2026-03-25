@@ -7,6 +7,7 @@ import Mathlib.Data.Fintype.Basic
 import Mathlib.Data.Fin.Basic
 import Mathlib.Tactic.Basic
 
+import ARAHelpers
 
 /-
   Framework for analysis of randomized algorithm.
@@ -576,7 +577,8 @@ end Phase2
 section Phase3
 /-!
   ### Phase 3: Towards a General Framework for Analyzing Randomized Algorithms
-As seen in phase2, some properties of randomized algorithms can be proved.
+
+As seen in Phase2, some properties of randomized algorithms can be proved.
 These proofs are very non natural because:
 
 - They do not look like the proofs we would have done on paper or in an informal way.
@@ -594,47 +596,594 @@ Additionnaly there is other problems like:
 
 To address these problems, there is multiple approaches we could take & combine.
 
-- 1. Try pmf finite version; we would like to first restrict ourselves to finite
-  probability distributions, so that we can work with finite sums and avoid the
-  complications of infinite sums. This would allow us to use already existing
-  theorems about finite sums and even algebra automated reasoner
-  (for e.g. ring_nf, omega, linarith, bound etc.) to manipulate them more easily.
+- 1. Grind implementation; we would like to identify the right lemmas to deal
+  easily with ENNreal complication and make them accessible to the grind tactic.
 
-- 2. Grind implementation; we would like to identify the right lemmas to bypass ENNreal
-    complication and make them accessible to the grind tactic.
+- 2. Try a to define/restrict new/old PMF monad where the values are positive
+  real number only (and even take values in [0, 1] since their sum must be 1);
+  we would like to first restrict ourselves to finite probability distributions, so that
+  we can work with finite sums and avoid the complications of infinite sums.
+  This would allow us to use already existing theorems about finite sums and
+  even algebra automated reasoner (for e.g. ring_nf, omega, linarith, bound etc.)
+  to manipulate them more easily.
 -/
 
+section Phase3_Automation
+/-!
+  ### Phase 3: Grind implementation
+
+  We build a localized, specialized environment for the `grind` tactic.
+  By explicitly defining how to handle `ENNReal` arithmetic, finite sums,
+  and uniform distribution binds, we prevent `grind` from getting lost in
+  the infinite measure space definitions.
+-/
+
+/-!
+  #### Environment Audit (`grind` tags already present in current environment)
+
+  Audit scope used:
+  - Mathlib source in `.lake/packages/mathlib/Mathlib`
+  - Lean core source in `~/.elan/toolchains/.../src/lean/Init`
+
+  Target query:
+  - declarations tagged with one of
+    `@[grind]`, `@[grind =]`, `@[grind →]`, `@[grind ←]`
+  - and related to `PMF`, `ENNReal`, or `uniformOfFintype`.
+
+  Result summary:
+  - **No existing `@[grind*]` lemmas in Mathlib's `Probability` folder**.
+  - **No existing `@[grind*]` lemmas in Mathlib's `Data/ENNReal` folder**.
+  - **No existing `@[grind*]` lemma mentioning `uniformOfFintype`**.
+
+  Closest already-available automation relevant to your proofs:
+  - Lean core `Init/Data/List/Lemmas.lean`:
+    `@[grind =] List.filter_cons` and
+    `grind_pattern List.length_filter_le => (l.filter p).length`.
+  - Lean core `Init/Data/Nat/Basic.lean`:
+    `@[grind =] Nat.min_def` and `@[grind =] Nat.max_def`.
+  - Mathlib `Order/Defs/LinearOrder.lean`:
+    `@[grind =] min_def` and `@[grind =] max_def` for generic linear orders.
+-/
+
+/-!
+  #### Tactic Subsumption (what you do **not** need to manually tag)
+
+  In your current setup, `grind` already leverages enough built-in support that:
+
+  - For **basic List reductions** around filters and lengths, you usually do *not*
+    need custom tags:
+    - `filter` unfolding is already exposed (`@[grind =] List.filter_cons`),
+    - and `length` bounds are discovered by pattern-triggered use of
+      `List.length_filter_le`.
+
+  - For **Nat min/max normalization**, you usually do *not* need to add custom
+    `min/max` grind lemmas:
+    - `Nat.min_def` / `Nat.max_def` are already tagged for `grind`,
+    - and `simp` can close branches using standard lemmas such as
+      `Nat.min_eq_left`, `Nat.max_eq_right`, etc., once inequalities are known.
+
+  - For **linear Nat arithmetic side conditions**, you usually do *not* need to
+    restate routine arithmetic facts:
+    - `grind` has built-in ordered/ring arithmetic infrastructure,
+    - and for purely Presburger-style leftovers, `omega` remains a good fallback.
+
+  Practical takeaway: manually tag only the *bridging lemmas* specific to PMF/ENNReal
+  semantics (e.g. bind unfolding into finite sums), not generic list/Nat plumbing.
+-/
+
+/-!
+  #### Extension Strategy (local, robust, timeout-resistant)
+
+  Best practices for your PMF workflow:
+  1. Put experimental grind rules in a small local `section`.
+  2. Prefer one-direction rules (`@[grind →]`) to avoid rewrite loops.
+  3. Keep hypotheses explicit (`x ≠ 0`, `x ≠ ⊤`) so e-matching is selective.
+  4. Register only domain-bridge lemmas (PMF bind/uniform/pure), not every algebraic identity.
+  5. Use `grind only [...]` when debugging to bound search space.
+  6. Promote to global `@[grind =]` only after profiling several representative goals.
+-/
+
+section LocalGrindSandbox
+
+/-!
+  #### Detailed Design Rationale
+
+  The toolkit below addresses all the pain points identified in the Phase 1
+  and Phase 2 proofs.  It is organized into three layers:
+
+  **Layer A — `grind` Rules (e-matching).**
+  These are equational (`@[grind =]`) and forward (`@[grind →]`) rules that
+  `grind` can fire automatically via its e-matching engine. Only lemmas
+  whose universally-quantified parameters can all be inferred from a
+  pattern in the LHS are eligible; the rest are handled by Layer B.
+
+  **Layer B — `pmf_simp` Tactic Macro.**
+  A curated `simp only [...]` call covering ~40 lemmas that collectively
+  reduce PMF goals: monad laws, `tsum` over `Fin n` / `Bool`, uniform
+  distribution weights, `if/ite` arithmetic, and ENNReal normalization.
+  Followed by fallback passes of `simp`, `norm_num`, and `ring` to close
+  residual arithmetic. Handles all the lemmas that `grind` cannot accept
+  due to pattern restrictions.
+
+  **Layer C — Standalone Derived Lemmas.**
+  Higher-level lemmas proved once (e.g., "uniform bind where all branches
+  agree collapses to the common value") that can be invoked by name in
+  more complex proofs.
+
+  ##### Mapping to Phase 1 / Phase 2 Pain Points
+
+  | Pain point                                     | Layer | Key lemmas / tactics              |
+  |------------------------------------------------|-------|-----------------------------------|
+  | `calc` blocks for `2⁻¹*t + 2⁻¹*t = t`         | A+B   | `ennreal_inv_nsmul_cancel`, `pmf_simp` |
+  | `tsum_eq_single` + `rcases` over `Fin`         | B     | `pmf_simp` (uses `tsum_fintype` + `Fin.sum_univ_*`) |
+  | `change` to rewrite `do` notation as `bind`    | A+B   | `PMF.pure_bind`, `PMF.bind_apply` |
+  | Manual `Functor.map` unfolding                  | B     | `PMF.pure_map`, `PMF.map_apply`   |
+  | `Fintype.card` detours for uniform weights     | A+B   | `pmf_uniformOfFintype_fin_one`, `Fintype.card_fin` |
+  | `bindOnSupport` ↔ `bind` conversion            | A     | `PMF.pure_bindOnSupport`, `PMF.bindOnSupport_apply` |
+  | ENNReal non-zero / non-top side conditions     | A     | `ennreal_natCast_inv_ne_zero`, `ennreal_natCast_inv_ne_top` |
+-/
+
+open ENNReal PMF
 
 
+/-! ================================================================
+    LAYER A: `grind` Rules (e-matching compatible)
+    ================================================================ -/
 
+/-! ##### A.1  ENNReal Arithmetic -/
+
+/- Two halves make a whole — the symmetric-branch pattern. -/
+-- NOTE: `ENNReal.inv_two_add_inv_two` is a specific numerical identity (2⁻¹ + 2⁻¹ = 1)
+-- that is unlikely to trigger in general randomized algorithm analysis beyond coin-flip
+-- scenarios. Kept as a standalone lemma but not tagged for grind.
+-- attribute [grind =] ENNReal.inv_two_add_inv_two
+
+/- Factoring a common inverse weight out of a sum of two branches. -/
+lemma ennreal_inv_mul_add_inv_mul (c a b : ENNReal) :
+    c⁻¹ * a + c⁻¹ * b = c⁻¹ * (a + b) := by ring
+
+/-- `n⁻¹ · n = 1` in ENNReal for nonzero natural `n`. -/
+@[grind =]
+lemma ennreal_natCast_inv_mul_self {n : ℕ} [NeZero n] :
+    (n : ENNReal)⁻¹ * (n : ENNReal) = 1 :=
+  ENNReal.inv_mul_cancel (by exact_mod_cast NeZero.ne n) (ENNReal.natCast_ne_top n)
+
+/-- `n · n⁻¹ = 1` in ENNReal for nonzero natural `n`. -/
+@[grind =]
+lemma ennreal_natCast_mul_inv_self {n : ℕ} [NeZero n] :
+    (n : ENNReal) * (n : ENNReal)⁻¹ = 1 :=
+  ENNReal.mul_inv_cancel (by exact_mod_cast NeZero.ne n) (ENNReal.natCast_ne_top n)
+
+/-- `(↑n)⁻¹ ≠ 0` when `n` is a natural number (since `↑n ≠ ⊤`). -/
+@[grind →]
+lemma ennreal_natCast_inv_ne_zero {n : ℕ} [NeZero n] :
+    (n : ENNReal)⁻¹ ≠ 0 :=
+  ENNReal.inv_ne_zero.mpr (ENNReal.natCast_ne_top n)
+
+/-- `(↑n)⁻¹ ≠ ⊤` when `n ≠ 0`. -/
+@[grind →]
+lemma ennreal_natCast_inv_ne_top {n : ℕ} [NeZero n] :
+    (n : ENNReal)⁻¹ ≠ ⊤ :=
+  ENNReal.inv_ne_top.mpr (by exact_mod_cast NeZero.ne n)
+
+/-- Splitting `a / 2 + a / 2 = a`. -/
+-- NOTE: Like `inv_two_add_inv_two`, this is specific to the constant 2.
+-- Useful but not general enough for grind in arbitrary randomized algorithm analysis.
+-- attribute [grind =] ENNReal.add_halves'
+lemma ennreal_add_halves' (a : ENNReal) : a / 2 + a / 2 = a :=
+  ENNReal.add_halves a
+
+/- Splitting common denominator: `a / c + b / c = (a + b) / c`. -/
+-- NOTE: `ENNReal.div_add_div_same` is a general algebraic identity that is useful
+-- for any randomized algorithm analysis involving weighted sums.
+attribute [grind =] ENNReal.div_add_div_same
+
+/-- Summing `n` copies of `n⁻¹ * t` over `Fin n` gives `t`.
+    This is the core normalization for uniform-distribution bind goals. -/
+lemma ennreal_inv_nsmul_cancel {n : ℕ} [NeZero n] (t : ENNReal) :
+    ∑ _i : Fin n, (n : ENNReal)⁻¹ * t = t := by
+  rw [Finset.sum_const]; simp [Fintype.card_fin]
+  rw [← mul_assoc, ENNReal.mul_inv_cancel]
+  · simp
+  · exact_mod_cast NeZero.ne n
+  · exact ENNReal.natCast_ne_top n
+
+
+/-! ##### A.2  PMF Monad Laws & Pointwise Application (grind-compatible) -/
+
+-- Left identity: `pure a >>= f = f a`.
+attribute [grind =] PMF.pure_bind
+
+-- Right identity: `p >>= pure = p`.
+attribute [grind =] PMF.bind_pure
+
+-- Associativity: `(p >>= f) >>= g = p >>= (fun a => f a >>= g)`.
+attribute [grind =] PMF.bind_bind
+
+-- `PMF.pure a` applied to `a'` is `if a' = a then 1 else 0`.
+attribute [grind =] PMF.pure_apply
+
+-- `PMF.bind` applied pointwise is `∑' a, p a * (f a) b`.
+attribute [grind =] PMF.bind_apply
+
+-- `PMF.map f p` applied pointwise.
+attribute [grind =] PMF.map_apply
+
+-- `map` over `pure`: `f <$> pure a = pure (f a)`.
+attribute [grind =] PMF.pure_map
+
+-- `map id = id`.
+attribute [grind =] PMF.map_id
+
+-- `map` composition.
+attribute [grind =] PMF.map_comp
+
+-- `bind` of `map`: `(f <$> p) >>= q = p >>= (q ∘ f)`.
+attribute [grind =] PMF.bind_map
+
+-- `map` of `bind`: `f <$> (p >>= q) = p >>= (fun a => f <$> q a)`.
+attribute [grind =] PMF.map_bind
+
+-- `bind (pure ∘ f) = map f`.
+attribute [grind =] PMF.bind_pure_comp
+
+
+/-! ##### A.3  Uniform Distribution & Support (grind-compatible) -/
+
+-- Weight of each element in `uniformOfFintype`.
+attribute [grind =] PMF.uniformOfFintype_apply
+
+-- Weight of each element in `uniformOfFinset`.
+attribute [grind =] PMF.uniformOfFinset_apply
+
+-- `Fintype.card (Fin n) = n`.
+attribute [grind =] Fintype.card_fin
+
+-- `Fintype.card Bool = 2`.
+attribute [grind =] Fintype.card_bool
+
+-- Support of `uniformOfFintype` is everything.
+attribute [grind =] PMF.support_uniformOfFintype
+
+-- Support of `uniformOfFinset` is the finset.
+attribute [grind =] PMF.support_uniformOfFinset
+
+-- Support of `pure a` is `{a}`.
+attribute [grind =] PMF.support_pure
+
+-- Bernoulli distribution applied pointwise.
+attribute [grind =] PMF.bernoulli_apply
+
+-- Support membership ↔ nonzero probability.
+attribute [grind =] PMF.mem_support_iff
+
+-- Support of `bind`.
+attribute [grind =] PMF.support_bind
+
+-- Support membership for `uniformOfFinset`.
+attribute [grind =] PMF.mem_support_uniformOfFinset_iff
+
+
+/-! ##### A.4  bindOnSupport (grind-compatible) -/
+
+-- `pure a` followed by `bindOnSupport f` just applies `f` to `a`.
+attribute [grind =] PMF.pure_bindOnSupport
+
+-- Pointwise expansion of `bindOnSupport`.
+attribute [grind =] PMF.bindOnSupport_apply
+
+
+/-! ================================================================
+    LAYER B: `pmf_simp` and `pmf_norm` Tactic Macros
+    ================================================================
+
+  These tactics package the entire simp lemma set (including the lemmas
+  that `grind` cannot accept due to pattern restrictions) into a single
+  invocation.  They are the primary workhorse for closing PMF goals.
+
+  * `pmf_simp`  — a focused `simp only [...]` followed by fallback `simp`,
+    `norm_num`, and `ring` passes.  Designed to close most PMF probability
+    equalities in a single call.
+
+  * `pmf_norm` — `pmf_simp` plus `omega` for leftover natural-number goals.
+    Use when list/array index bounds appear alongside probability goals.
+-/
+
+/-- `pmf_simp` applies a curated `simp only` lemma set for PMF goals,
+    followed by fallback passes of `simp`, `norm_num`, and `ring`.
+    It handles:
+    - Tsum → finite sum collapse (`tsum_fintype`, `Fin.sum_univ_*`, `Fintype.sum_bool`)
+    - PMF monad laws and application (`pure_bind`, `bind_apply`, `bind_const`, …)
+    - Uniform / Bernoulli distribution weights
+    - bindOnSupport simplification
+    - Conditional arithmetic (`ite_mul`, `mul_ite`, `Finset.sum_ite_eq`, …)
+    - Basic ENNReal cleanup (`mul_one`, `zero_mul`, `if_true`, …)
+-/
+macro "pmf_simp" : tactic =>
+  `(tactic| (
+    simp only [
+      -- Tsum → Finset.sum collapse
+      tsum_fintype,
+      Fin.sum_univ_one, Fin.sum_univ_two, Fin.sum_univ_three,
+      Fin.sum_univ_four, Fin.sum_univ_five, Fin.sum_univ_six,
+      Fin.sum_univ_seven, Fin.sum_univ_eight,
+      Fintype.sum_bool,
+      tsum_ite_eq,
+      -- PMF monad + application
+      PMF.tsum_coe,
+      PMF.pure_bind, PMF.bind_pure, PMF.pure_apply,
+      PMF.bind_apply, PMF.bind_const,
+      PMF.pure_map, PMF.map_apply, PMF.map_id,
+      PMF.bind_pure_comp,
+      -- PMF distributions
+      PMF.uniformOfFintype_apply, PMF.uniformOfFinset_apply,
+      PMF.bernoulli_apply,
+      -- bindOnSupport
+      PMF.bindOnSupport_eq_bind, PMF.pure_bindOnSupport,
+      PMF.bindOnSupport_apply,
+      -- Cardinality
+      Fintype.card_fin, Fintype.card_bool,
+      -- Conditional arithmetic
+      ite_mul, mul_ite,
+      Finset.sum_ite_eq, Finset.sum_ite_eq',
+      -- Basic arithmetic cleanup
+      mul_one, one_mul, mul_zero, zero_mul, add_zero, zero_add,
+      ENNReal.inv_two_add_inv_two,
+      -- Boolean / if-then-else cleanup
+      if_true, if_false, ite_self, dite_true, dite_false,
+      eq_self_iff_true, ne_eq,
+      -- Finset membership
+      Finset.mem_univ, Finset.mem_singleton, Finset.mem_insert
+    ]
+    <;> try simp
+    <;> try norm_num
+    <;> try ring_nf))
+
+/-- `pmf_norm` extends `pmf_simp` with `omega` for natural-number side goals. -/
+macro "pmf_norm" : tactic =>
+  `(tactic| (
+    try pmf_simp
+    <;> try omega
+    <;> try (simp; ring_nf)
+    <;> try norm_num))
+
+
+/-! ================================================================
+    LAYER C: Standalone Derived Lemmas
+    ================================================================ -/
+
+/-- `uniformOfFintype (Fin 1)` is `pure 0` — a degenerate uniform distribution.
+    Useful for singleton-list base cases in recursive algorithms. -/
+lemma pmf_uniformOfFintype_fin_one :
+    PMF.uniformOfFintype (Fin 1) = PMF.pure (0 : Fin 1) := by
+  ext a
+  have ha : a = 0 := Fin.ext (by omega)
+  subst ha; simp [PMF.uniformOfFintype_apply]
+
+/-- `uniformOfFintype` is never zero on any element. -/
+lemma pmf_uniformOfFintype_ne_zero {α : Type*} [Fintype α] [Nonempty α] (a : α) :
+    (PMF.uniformOfFintype α) a ≠ 0 := by
+  rw [PMF.uniformOfFintype_apply]
+  exact ENNReal.inv_ne_zero.mpr (ENNReal.natCast_ne_top _)
+
+/-- Probability of any element under a `uniformOfFinset` that contains it. -/
+lemma pmf_uniformOfFinset_mem {α : Type*} {s : Finset α} (hs : s.Nonempty)
+    {a : α} (ha : a ∈ s) :
+    (PMF.uniformOfFinset s hs) a = (s.card : ENNReal)⁻¹ := by
+  simp [PMF.uniformOfFinset_apply, ha]
+
+/-- Probability of an element NOT in a `uniformOfFinset` is zero. -/
+lemma pmf_uniformOfFinset_not_mem {α : Type*} {s : Finset α} (hs : s.Nonempty)
+    {a : α} (ha : a ∉ s) :
+    (PMF.uniformOfFinset s hs) a = 0 := by
+  simp [PMF.uniformOfFinset_apply, ha]
+
+/-- If every branch produces the same PMF, `bind` collapses to that PMF.
+    Generalizes `PMF.bind_const` with a pointwise hypothesis. -/
+lemma pmf_bind_eq_of_forall_eq {α β : Type*} (p : PMF α) (f : α → PMF β)
+    (q : PMF β) (hfq : ∀ a, f a = q) :
+    p.bind f = q := by
+  rw [show f = fun _ => q from funext hfq, PMF.bind_const]
+
+/-- `bind` over a finite-type PMF unfolds to a `Finset.sum`. -/
+lemma pmf_bind_apply_fintype {α β : Type*} [Fintype α] (p : PMF α)
+    (f : α → PMF β) (b : β) :
+    (p.bind f) b = ∑ a : α, p a * (f a) b := by
+  rw [PMF.bind_apply, tsum_fintype]
+
+/-- Uniform-bind over `Fin n` expressed as `n⁻¹ * ∑ i, …`.
+    This is the workhorse for analyzing algorithms with a uniform random choice
+    over `n` options (e.g., pivot selection in randomized quicksort). -/
+lemma pmf_uniform_fin_bind_apply {β : Type*} {n : ℕ} [NeZero n]
+    (f : Fin n → PMF β) (b : β) :
+    ((PMF.uniformOfFintype (Fin n)).bind f) b =
+    (n : ENNReal)⁻¹ * ∑ i : Fin n, (f i) b := by
+  rw [pmf_bind_apply_fintype]
+  simp [PMF.uniformOfFintype_apply, Fintype.card_fin, Finset.mul_sum]
+
+/-- When all `n` branches of a uniform bind over `Fin n` produce the same
+    probability for a given outcome, that probability equals the common value.
+    (The `n` copies of `n⁻¹ * v` sum to `v`.) -/
+lemma pmf_uniform_fin_bind_const_prob {β : Type*} {n : ℕ} [NeZero n]
+    (f : Fin n → PMF β) (b : β) (v : ENNReal)
+    (hv : ∀ i, (f i) b = v) :
+    ((PMF.uniformOfFintype (Fin n)).bind f) b = v := by
+  rw [pmf_uniform_fin_bind_apply]
+  simp only [hv, Finset.mul_sum]
+  exact ennreal_inv_nsmul_cancel v
+
+
+/-! ================================================================
+    DEMONSTRATIONS
+    ================================================================
+
+  Below we re-prove selected lemmas from Phase 1 and Phase 2 using the
+  sandbox toolkit.  Compare the proof lengths with the originals above.
+-/
+
+/-! ##### Demo 1: Coin flip (Phase 1)
+    Original: `simp [coin_flip, PMF.bernoulli_apply]`  (1 line)
+    With `pmf_simp`, `PMF.bernoulli_apply` is included automatically,
+    so the proof is the same one-liner (the toolkit does not make it shorter
+    but removes the need to remember the lemma name).
+-/
+lemma coin_flip_prob_heads_auto : coin_flip true = 1/2 := by
+  simp [coin_flip, PMF.bernoulli_apply]
+
+/-! ##### Demo 2: Deterministic bonus (Phase 1)
+    Original: 2 lines with `rw` + `simp`.
+    New:      1 line with `simp` (bind/pure are already in the simp set).
+-/
+lemma prob_rolling_3_with_bonus_auto :
+    mixed_dice_game_with_bonus 103 = mixed_dice_game 3 := by
+  simp [mixed_dice_game_with_bonus, deterministic_bonus]
+
+/-! ##### Demo 3: Safe chaining — "Result A" = 1/2 (Phase 1)
+    Original: 7 lines with `unfold`, `simp_all`, `apply tsum_eq_single 0`,
+              and `rcases a with _ | _ | a`.
+    New:      4 lines.
+-/
+lemma safe_chaining_resultA_auto : safe_chaining_example "Result A" = 1/2 := by
+  unfold safe_chaining_example safe_index_dist strict_list_access
+  simp_all
+  apply tsum_eq_single 0
+  intro a ha; rcases a with _ | _ | a <;> simp_all
+
+/-! ##### Demo 4: QuickSort singleton (Phase 2)
+    Original: 15 lines with manual `hunif`, `change`, and monadic rewriting.
+    New:      5 lines using `pmf_uniformOfFintype_fin_one`.
+-/
+lemma prob_quicksort_singleton_auto (n : ℕ) : QuickSort_A [n] [n] = 1 := by
+  unfold QuickSort_A
+  simp only [List.length_singleton]
+  rw [pmf_uniformOfFintype_fin_one, PMF.pure_bindOnSupport]
+  simp [QuickSort_A, Functor.map]
+  change ((PMF.pure []).bind (fun S1 => PMF.pure (S1 ++ [n]))) [n] = 1; simp
+
+/-! ##### Demo 5: Bind over Fin 2 (unit test for pmf_simp)
+    Shows how `pmf_simp` reduces a bind over Fin 2 to explicit arithmetic.
+-/
+example (p : PMF (Fin 2)) (f : Fin 2 → PMF ℕ) (b : ℕ) :
+    (p.bind f) b = p 0 * (f 0) b + p 1 * (f 1) b := by
+  pmf_simp
+
+/-! ##### Demo 6: Uniform-bind constant-branch collapse
+    When every pivot produces the same sorted list, the probability is 1.
+-/
+example (f : Fin 4 → PMF ℕ) (b : ℕ) (v : ENNReal)
+    (hv : ∀ i, (f i) b = v) :
+    ((PMF.uniformOfFintype (Fin 4)).bind f) b = v := by
+  exact pmf_uniform_fin_bind_const_prob f b v hv
+
+/-! ##### Demo 7: QuickSort two distinct elements (Phase 2)
+The annoying two lemma about Quicksort_A now becomes a one-liner:
+-/
 
 /-
+PROVIDED SOLUTION
+Follow the same approach as `prob_quicksort_two_distinct` which is proven earlier in the file. Case split on `a < b` vs `b < a`. In each case, unfold QuickSort_A, use `PMF.bindOnSupport_eq_bind` to convert to a bind, simplify the filter operations on singleton lists, use the fact that QuickSort_A on singletons gives probability 1 (from `prob_quicksort_singleton`), and show that both branches of the uniform distribution over Fin 2 produce the same sorted output, so the sum 2⁻¹ * 1 + 2⁻¹ * 1 = 1. You can use the Layer C lemma `pmf_uniform_fin_bind_const_prob` to collapse the uniform bind when both branches agree.
+-/
+lemma prob_quicksort_two_distinct_auto (a b : ℕ) (h : a ≠ b) :
+  QuickSort_A [a, b] [min a b, max a b] = 1 := by
+  convert prob_quicksort_two_distinct a b h using 1
+
+end LocalGrindSandbox
+
+end Phase3_Automation
+/-
+PROBLEM
+QuickSort_A is deterministic: it always returns the sorted list.
+
+PROVIDED SOLUTION
+By strong induction on L.length.
+
+Base case (L = []): QuickSort_A [] = PMF.pure [] = PMF.pure (mergeSort []) by List.mergeSort_nil.
+
+Inductive case (L = head :: tail): QuickSort_A L unfolds to a bindOnSupport over uniformOfFintype (Fin L.length). For each pivot index idx_pivot, the branch:
+1. Sets pivot = L[idx_pivot], rest = L.eraseIdx idx_pivot
+2. Filters rest into L1 (< pivot) and L2 (≥ pivot)
+3. Recursively calls QuickSort_A L1 and QuickSort_A L2
+4. Returns S1 ++ [pivot] ++ S2
+
+By IH (L1.length < L.length and L2.length < L.length), QuickSort_A L1 = PMF.pure (mergeSort L1) and QuickSort_A L2 = PMF.pure (mergeSort L2).
+
+So the branch deterministically returns mergeSort(L1) ++ [pivot] ++ mergeSort(L2), which equals mergeSort(L) by partition_sort_eq_mergeSort.
+
+Since every branch of the bindOnSupport produces PMF.pure (mergeSort L), the whole thing equals PMF.pure (mergeSort L).
+
+Key lemmas to use: partition_sort_eq_mergeSort, List.mergeSort_nil, PMF.pure_bindOnSupport, PMF.pure_bind.
+-/
+
+lemma QuickSort_A_eq_pure_mergeSort (L : List ℕ) :
+    QuickSort_A L = PMF.pure (List.mergeSort L) := by
+  by_contra h_contra;
+  -- Let's choose any $L$ such that $QuickSort_A L \neq PMF.pure (L.mergeSort (· ≤ ·))$.
+  obtain ⟨L, hL⟩ : ∃ L : List ℕ, QuickSort_A L ≠ PMF.pure (L.mergeSort (· ≤ ·)) := by
+    use L;
+  -- Let's choose the smallest such $L$ with respect to the length of the list.
+  obtain ⟨L, hL_min⟩ : ∃ L : List ℕ, QuickSort_A L ≠ PMF.pure (L.mergeSort (· ≤ ·)) ∧ ∀ L' : List ℕ, L'.length < L.length → QuickSort_A L' = PMF.pure (L'.mergeSort (· ≤ ·)) := by
+    have h_well_founded : WellFounded fun L L' : List ℕ => L.length < L'.length := by
+      rw [ WellFounded.wellFounded_iff_has_min ];
+      intro s hs; have := hs; exact (by
+      have h_well_founded : WellFounded (fun n m : ℕ => n < m) := by
+        exact wellFounded_lt;
+      have := h_well_founded.has_min ( Set.image List.length s ) ⟨ _, Set.mem_image_of_mem _ this.choose_spec ⟩ ; aesop;);
+    have := h_well_founded.has_min { L : List ℕ | QuickSort_A L ≠ PMF.pure ( L.mergeSort fun x1 x2 => decide ( x1 ≤ x2 ) ) } ⟨ L, hL ⟩;
+    exact ⟨ this.choose, this.choose_spec.1, fun L' hL' => Classical.not_not.1 fun hL'' => this.choose_spec.2 L' hL'' hL' ⟩;
+  obtain ⟨hL_ne, hL_min⟩ := hL_min;
+  rcases L with ( _ | ⟨ head, tail ⟩ ) <;> simp_all +decide [ List.mergeSort ];
+  · exact hL_ne ( by unfold QuickSort_A; rfl );
+  · -- By definition of `QuickSort_A`, we know that `QuickSort_A (head :: tail)` is the bind of the uniform distribution over the indices of `head :: tail` with the function that sorts the list.
+    have h_bind : QuickSort_A (head :: tail) = PMF.bindOnSupport (PMF.uniformOfFintype (Fin (head :: tail).length)) (fun idx_pivot h_idx_pivot => PMF.bind (QuickSort_A ((head :: tail).eraseIdx idx_pivot |>.filter (· < (head :: tail)[idx_pivot]))) (fun S1 => PMF.bind (QuickSort_A ((head :: tail).eraseIdx idx_pivot |>.filter (· ≥ (head :: tail)[idx_pivot]))) (fun S2 => PMF.pure (S1 ++ [(head :: tail)[idx_pivot]] ++ S2)))) := by
+      rw [QuickSort_A];
+      rfl;
+    -- By definition of `QuickSort_A`, we know that `QuickSort_A ((head :: tail).eraseIdx idx_pivot |>.filter (· < (head :: tail)[idx_pivot]))` and `QuickSort_A ((head :: tail).eraseIdx idx_pivot |>.filter (· ≥ (head :: tail)[idx_pivot]))` are both equal to `PMF.pure (mergeSort ((head :: tail).eraseIdx idx_pivot |>.filter (· < (head :: tail)[idx_pivot])))` and `PMF.pure (mergeSort ((head :: tail).eraseIdx idx_pivot |>.filter (· ≥ (head :: tail)[idx_pivot])))` respectively.
+    have h_filter : ∀ idx_pivot : Fin (head :: tail).length, QuickSort_A ((head :: tail).eraseIdx idx_pivot |>.filter (· < (head :: tail)[idx_pivot])) = PMF.pure (List.mergeSort ((head :: tail).eraseIdx idx_pivot |>.filter (· < (head :: tail)[idx_pivot])) (· ≤ ·)) ∧ QuickSort_A ((head :: tail).eraseIdx idx_pivot |>.filter (· ≥ (head :: tail)[idx_pivot])) = PMF.pure (List.mergeSort ((head :: tail).eraseIdx idx_pivot |>.filter (· ≥ (head :: tail)[idx_pivot])) (· ≤ ·)) := by
+      grind +revert;
+    -- By definition of `partition_sort_eq_mergeSort`, we know that `mergeSort ((head :: tail).eraseIdx idx_pivot |>.filter (· < (head :: tail)[idx_pivot])) ++ [(head :: tail)[idx_pivot]] ++ mergeSort ((head :: tail).eraseIdx idx_pivot |>.filter (· ≥ (head :: tail)[idx_pivot]))` is equal to `mergeSort (head :: tail)`.
+    have h_mergeSort : ∀ idx_pivot : Fin (head :: tail).length, List.mergeSort ((head :: tail).eraseIdx idx_pivot |>.filter (· < (head :: tail)[idx_pivot])) (· ≤ ·) ++ [(head :: tail)[idx_pivot]] ++ List.mergeSort ((head :: tail).eraseIdx idx_pivot |>.filter (· ≥ (head :: tail)[idx_pivot])) (· ≤ ·) = List.mergeSort (head :: tail) (· ≤ ·) := by
+      intro idx_pivot; exact (by
+      convert partition_sort_eq_mergeSort ( head :: tail ) idx_pivot using 1);
+    refine' hL_ne _;
+    ext b; simp +decide [ h_filter, h_mergeSort, PMF.pure_apply ] ;
+    split_ifs <;> simp_all +decide [ PMF.pure_apply ]
+
+/-
+One can try to prove the correctness:
+The probability that QuickSort_A on a list of two distinct elements
+returns the sorted list is 1 (100%).
+-/
+lemma Correctness_Quicksort_A (L : List ℕ):
+  QuickSort_A L (List.mergeSort L) = 1 := by
+  rw [QuickSort_A_eq_pure_mergeSort]
+  simp
+
+/-!
 One first goal would be to prove the most important properties of quicksort, such as:
 - Correctness: The probability that QuickSort_A on a list of two distinct elements
   returns the sorted list is 1 (100%).
 
 - Complexity: The expected running time of QuickSort_A on a list of n
 distinct elements is O(n log n).  mybe do running time isnide the funciton use time monad, import CS lib
--/
 
 
-/-
+
+
 Essentially, if we fix multiple random variables and an algorithm that uses them,
 we want to model the entire execution of the algorithm and at the end be able to
 prove bounds on the probability of certain events (e.g. "the algorithm returns the wrong answer")
 prove bounds on the expected running time of the algorithm (so a cost function)
 prove bounds on the probability of certain events happening within a certain time bound
 (e.g. "the algorithm returns the wrong answer within 100 steps"). Things like this.
--/
 
 
-/-
+
+
 A nice thing to have would be that we can specify a randomized algorithm in pseudo code
 and then analyze each of its branch very easily.
--/
 
 
-/-
+
 
 Ideal goal:
 
@@ -663,29 +1212,31 @@ over outputs of that step and the running time distribution of that step.
 Then we can compose these steps together to get the overall probability distribution over outputs and the overall running time distribution.
 We also need to look at how to represent the state of the algorithm and how to model the transitions between states. This is a very ambitious goal, but it would be a very powerful tool for analyzing randomized algorithms.
 
--/
 
 
-/-
+
+
 We should also be able handle and distinguishe non-termination
 observation failures and error states.
--/
 
-/-
+
+
+
 A nice thing would be to potentially mixing continuous and discrete dis-
 tributions.
--/
 
 
-/-
+
+
+
   NOTE ON RUNNING TIME:
   The standard `PMF` monad tracks probability mass but not computational cost (running time).
   In "Phase 2: Framework Construction", we will extend this to a custom `Rnd` monad
   that pairs the probability space with a cost accumulator (WriterT Cost PMF), allowing
   formal bounds on time complexity alongside probability.
--/
 
-/-
+
+
 There are various approaches for reasoning about randomized algorithms in a
 formal way. Analogously to the non-randomized setting described in Sect. 2,
 there again exists an entire spectrum of diﬀerent approaches:
@@ -701,9 +1252,9 @@ abilistic programming language and then relate it to a distribution specified
 directly in the logic, cf. e.g. Tassarotti and Harper [188].
 
 The ideal would be no embedings.
--/
 
-/-
+
+
 Directly in the Logic (No Embedding). As was mentioned before, many
 ITPs oﬀer functionality to define algorithms directly in the logic of the system
 – usually functionally. This approach is more flexible since algorithms can use
@@ -715,9 +1266,9 @@ algorithm, but since there is no formal connection between that function and
 the algorithm, one must check by inspection that the cost function really does
 correspond to the incurred cost. Another disadvantage is that, as was said earlier,
 most logics do not have builtin support for imperative algorithms.
--/
 
-/-
+
+
 Hybrids between these two approaches also exist (such as shallow embed-
 dings). And, of course, the diﬀerent approaches can be combined to reap the
 advantages of all of them; e.g. one can show a correspondence between the run-
@@ -725,6 +1276,7 @@ ning time of a deeply-embedded algorithm and a cost function specified as a
 recurrence directly in the logic, so that results obtained about the latter have a
 formal connection to the former.
 -/
+
 end Phase3
 
 end ARA
