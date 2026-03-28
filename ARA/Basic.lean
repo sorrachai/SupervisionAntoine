@@ -5,8 +5,7 @@ import Mathlib.Data.Rat.Defs
 import Mathlib.Probability.Distributions.Uniform
 import Mathlib.Data.Fintype.Basic
 import Mathlib.Data.Fin.Basic
-import Mathlib.Tactic.Basic
-import Mathlib
+import Mathlib.Tactic
 
 /-
   Framework for analysis of randomized algorithm.

@@ -141,6 +141,7 @@ lemma QuickSort_A_eq_pure_mergeSort (L : List ℕ) :
   rcases L with ( _ | ⟨ head, tail ⟩ ) <;> simp_all +decide;
   · exact hL_ne ( by unfold QuickSort_A; rfl );
   · -- By definition of `QuickSort_A`, we know that `QuickSort_A (head :: tail)` is the bind of the uniform distribution over the indices of `head :: tail` with the function that sorts the list.
+    haveI : Nonempty (Fin (head :: tail).length) := ⟨0, by simp⟩
     have h_bind : QuickSort_A (head :: tail) = PMF.bindOnSupport (PMF.uniformOfFintype (Fin (head :: tail).length)) (fun idx_pivot h_idx_pivot => PMF.bind (QuickSort_A ((head :: tail).eraseIdx idx_pivot |>.filter (· < (head :: tail)[idx_pivot]))) (fun S1 => PMF.bind (QuickSort_A ((head :: tail).eraseIdx idx_pivot |>.filter (· ≥ (head :: tail)[idx_pivot]))) (fun S2 => PMF.pure (S1 ++ [(head :: tail)[idx_pivot]] ++ S2)))) := by
       rw [QuickSort_A];
       rfl;
