@@ -3,7 +3,7 @@ import ARA.Basic
 /-!
   ### Phase 1: Basic Probability Manipulation and familiarisation with PMF
 
-  Here we implement the specific "Pragmatic Use" cases:
+  Here we implement the specific use cases:
   1.  **Chaining (bind):** A coin flip deciding between different subsequent random processes.
   2.  **Deterministic Steps (pure):** Embedding deterministic values into the probability space.
   3.  **Strict Safety (bindOnSupport):** Mathematically guaranteeing that invalid operations are never reachable.
@@ -14,7 +14,7 @@ namespace ARA
 open PMF
 
 /-
-  **Pragmatic Use 1: The Monadic Bind (Branching)**
+  **Use 1**
 
   "Imagine an algorithm that flips a fair coin, and if heads, it rolls a 6-sided die;
   if tails, it rolls a 20-sided die."
@@ -24,14 +24,13 @@ open PMF
   - Path 2: P(Tails) * P(d20=k) = 1/2 * 1/20
 -/
 /--
-  First we model a simple coin flip modeled as a Bernoulli trial with parameter p=1/2.
-  This corresponds to the simplest randomized algorithm primitive.
+  First we need to model a simple coin flip as a Bernoulli trial with parameter p=1/2.
+  This corresponds to one of the simplest randomized algorithm primitive.
 -/
 noncomputable def coin_flip : PMF Bool := PMF.bernoulli (1/2 : NNReal) (by norm_num)
 
 /--
   lemma: The probability of obtaining Heads (true) in a fair coin flip is exactly 1/2.
-  This demonstrates the "rapid, multi-line verification of probability bounds" goal.
 -/
 lemma coin_flip_prob_heads : coin_flip true = 1/2 := by
   -- Unfold the definition of coin_flip and apply Bernoulli properties
@@ -59,7 +58,7 @@ noncomputable def mixed_dice_game : PMF ℕ := coin_flip.bind algorithm1
 theorem prob_rolling_3 : mixed_dice_game 3 = (1/2) * (1/6) + (1/2) * (1/20) := by
   rw [mixed_dice_game, PMF.bind_apply, coin_flip]
   simp [PMF.bernoulli_apply]
-  -- We prove the values for the two branches
+  -- We need to prove the values for the two branches
 
   have : algorithm1 true 3 = 1/6 := by
     unfold algorithm1 d6
@@ -94,7 +93,7 @@ theorem prob_rolling_3 : mixed_dice_game 3 = (1/2) * (1/6) + (1/2) * (1/20) := b
   simp_all
 
 /--
-  **Pragmatic Use 2: Deterministic Embedding (Pure)**
+  **Use 2**
 
   "If an algorithm reaches a deterministic step... pure embeds that guaranteed result."
 
@@ -106,13 +105,15 @@ noncomputable def deterministic_bonus (score : ℕ) : PMF ℕ := PMF.pure (score
 -- So that:
 noncomputable def mixed_dice_game_with_bonus : PMF ℕ := mixed_dice_game.bind deterministic_bonus
 
--- The probability of rolling a 3 and then adding the bonus is the same as rolling a 3:
-theorem prob_rolling_3_with_bonus : mixed_dice_game_with_bonus 103 = mixed_dice_game 3 := by
-  rw [mixed_dice_game_with_bonus, PMF.bind_apply, mixed_dice_game]
-  simp [deterministic_bonus]
+-- The probability of rolling a k and then adding the bonus is the same as rolling a k:
+theorem prob_rolling_k_with_bonus (k : ℕ) : mixed_dice_game_with_bonus (k + 100) = mixed_dice_game k := by
+  rw [mixed_dice_game_with_bonus, PMF.bind_apply]
+  simp [deterministic_bonus, PMF.pure_apply]
+  simp_rw [@eq_comm _ k, tsum_ite_eq]
+
 
 /--
-  **Pragmatic Use 3: STRICTLY SAFE CHAINING (bindOnSupport)**
+  **Use 3**
 
   "bindOnSupport is the standard bind operation but with an additional safety check: it
   requires a logical proof that a specific outcome is actually possible before allowing
@@ -124,32 +125,28 @@ theorem prob_rolling_3_with_bonus : mixed_dice_game_with_bonus 103 = mixed_dice_
   P.bindsupport (λ x h => ...) (for a λ : α → β) (where h is the proof that x is in the support
   of P and thus satisfies P(x)) will be the probability distribution on β obtained by
   applying the function λ to all x in the support of P, weighted by their probability
-  (it is a PMF since the total sum remains 1 as the domain of the function λ is exactly
-  those that satisfy):
+  (it is indeed a PMF since the total sum remains 1 as the domain of the function λ is exactly
+  the support of P):
 
   for b : β, P.bindsupport (λ x h => ...) b = ∑ x in support of P, P x * (λ x h) b.
 
-  Example:
-  Accessing an array at an out-of-bounds index is impossible if we use `Fin n`.
-  We cannot even construct the function call without a proof that the index is in bounds.
 
-  Here, we have a distribution over `ℕ` that we know is supported on `{0, 1}`.
-  We want to safely access a list of size 2. `bindOnSupport` allows us to bridge the gap.
+  Example:
+  This is particularly useful when we want to ensure that certain "unsafe" operations are never
+  reachable. For example, if we have a distribution over natural numbers that is only supported
+  on {0, 1}, and we want to use these numbers as indices to access a list of size 2, we can
+  use `bindOnSupport` to ensure that we never try to access an out-of-bounds index (like 2 or more).
 -/
 
 -- A distribution that only supports {0, 1}
 noncomputable def safe_index_dist : PMF ℕ := PMF.uniformOfFinset {0, 1} (by simp)
 
 -- A strict operation that cannot be called without a proof that n < 2 (our λ).
--- It safely extracts elements from a 2-element list.
+-- It safely extracts elements from a 2-element list and returns them as a
+-- PMF String.
 noncomputable def strict_list_access (n : ℕ) (h : n < 2) : PMF String :=
-  let my_data := ["Result A", "Result B"]
-  -- We construct a valid Fin index using the proof `h`
-  let safe_idx : Fin 2 := ⟨n, h⟩
-  -- We need to prove the index is valid for the list length
-  have h_valid : safe_idx.val < my_data.length := by simp [my_data]
-  -- Finally, we return the result as a pure distribution (deterministic)
-  PMF.pure (my_data.get ⟨safe_idx, h_valid⟩)
+  let safe_idx : Fin (["Result A", "Result B"]).length := ⟨n, h⟩
+  PMF.pure (["Result A", "Result B"].get safe_idx)
 
 -- So our λ takes n : ℕ and a proof that n < 2, and returns a PMF String.
 
