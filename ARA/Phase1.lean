@@ -13,7 +13,7 @@ namespace ARA
 
 open PMF
 
-/-
+/--
   **Use 1**
 
   "Imagine an algorithm that flips a fair coin, and if heads, it rolls a 6-sided die;
@@ -22,8 +22,8 @@ open PMF
   `bind` (>>=) automatically handles the probability mass multiplication:
   - Path 1: P(Heads) * P(d6=k) = 1/2 * 1/6
   - Path 2: P(Tails) * P(d20=k) = 1/2 * 1/20
--/
-/--
+
+
   First we need to model a simple coin flip as a Bernoulli trial with parameter p=1/2.
   This corresponds to one of the simplest randomized algorithm primitive.
 -/
