@@ -167,11 +167,7 @@ lemma safe_chaining_example_resultA : safe_chaining_example "Result A" = 1/2 := 
   unfold safe_chaining_example safe_index_dist strict_list_access
   simp_all
   apply tsum_eq_single 0
-  · intro a ha
-    rcases a with _ | _ | a
-    · contradiction
-    · simp
-    · simp
+  intro a ha; rcases a with _ | _ | a <;> simp_all
 
 lemma safe_chaining_example_resultB : safe_chaining_example "Result B" = 1/2 := by
   unfold safe_chaining_example safe_index_dist strict_list_access
