@@ -1,7 +1,7 @@
 import ARA.Basic
 
 /-!
-  ### Phase 3: Grind implementation
+  ### Grind implementation
 
   We build a localized, specialized environment for the `grind` tactic.
   By explicitly defining how to handle `ENNReal` arithmetic, finite sums,
@@ -123,12 +123,6 @@ open ENNReal PMF
 
 /-! ##### A.1  ENNReal Arithmetic -/
 
-/- Two halves make a whole — the symmetric-branch pattern. -/
--- NOTE: `ENNReal.inv_two_add_inv_two` is a specific numerical identity (2⁻¹ + 2⁻¹ = 1)
--- that is unlikely to trigger in general randomized algorithm analysis beyond coin-flip
--- scenarios. Kept as a standalone lemma but not tagged for grind.
--- attribute [grind =] ENNReal.inv_two_add_inv_two
-
 /- Factoring a common inverse weight out of a sum of two branches. -/
 lemma ennreal_inv_mul_add_inv_mul (c a b : ENNReal) :
     c⁻¹ * a + c⁻¹ * b = c⁻¹ * (a + b) := by ring
@@ -182,13 +176,13 @@ lemma ennreal_inv_nsmul_cancel {n : ℕ} [NeZero n] (t : ENNReal) :
 
 /-! ##### A.2  PMF Monad Laws & Pointwise Application (grind-compatible) -/
 
--- Left identity: `pure a >>= f = f a`.
+-- Left identity of `bind`: `pure a >>= f = f a`.
 attribute [grind =] PMF.pure_bind
 
--- Right identity: `p >>= pure = p`.
+-- Right identity of `bind`: `p >>= pure = p`.
 attribute [grind =] PMF.bind_pure
 
--- Associativity: `(p >>= f) >>= g = p >>= (fun a => f a >>= g)`.
+-- Associativity of `bind`: `(p >>= f) >>= g = p >>= (fun a => f a >>= g)`.
 attribute [grind =] PMF.bind_bind
 
 -- `PMF.pure a` applied to `a'` is `if a' = a then 1 else 0`.
@@ -197,16 +191,17 @@ attribute [grind =] PMF.pure_apply
 -- `PMF.bind` applied pointwise is `∑' a, p a * (f a) b`.
 attribute [grind =] PMF.bind_apply
 
--- `PMF.map f p` applied pointwise.
+-- `PMF.map f p` or `f <$> p` (defined as `PMF.bind p (fun a => PMF.pure (f a))`, litteraly is
+-- in mathematical terms the pushforward distribution of `p` by `f`: p_f or f#p) applied pointwise
 attribute [grind =] PMF.map_apply
 
 -- `map` over `pure`: `f <$> pure a = pure (f a)`.
 attribute [grind =] PMF.pure_map
 
--- `map id = id`.
+-- `map id = id`: `id <$> p = p`.
 attribute [grind =] PMF.map_id
 
--- `map` composition.
+-- `map` composition: `f <$> (g <$> p) = (f ∘ g) <$> p`.
 attribute [grind =] PMF.map_comp
 
 -- `bind` of `map`: `(f <$> p) >>= q = p >>= (q ∘ f)`.
@@ -215,9 +210,11 @@ attribute [grind =] PMF.bind_map
 -- `map` of `bind`: `f <$> (p >>= q) = p >>= (fun a => f <$> q a)`.
 attribute [grind =] PMF.map_bind
 
--- `bind (pure ∘ f) = map f`.
+-- `bind (pure ∘ f) _ = map f _`: `p >>= (pure ∘ f) = f <$> p`.
 attribute [grind =] PMF.bind_pure_comp
 
+-- It wouldn't be surprising if we needed more monad laws or map/bind interaction lemmas later
+-- as we get into more complex algorithms, but these are the core ones for now.
 
 /-! ##### A.3  Uniform Distribution & Support (grind-compatible) -/
 
@@ -248,7 +245,8 @@ attribute [grind =] PMF.bernoulli_apply
 -- Support membership ↔ nonzero probability.
 attribute [grind =] PMF.mem_support_iff
 
--- Support of `bind`.
+-- Support of `bind` is the union of supports of the branches i.e
+-- `b ∈ support p >>= f` <-> `∃ a ∈ support p, b ∈ support (f a)`.
 attribute [grind =] PMF.support_bind
 
 -- Support membership for `uniformOfFinset`.
@@ -271,17 +269,10 @@ attribute [grind =] PMF.bindOnSupport_apply
   These tactics package the entire simp lemma set (including the lemmas
   that `grind` cannot accept due to pattern restrictions) into a single
   invocation.  They are the primary workhorse for closing PMF goals.
-
-  * `pmf_simp`  — a focused `simp only [...]` followed by fallback `simp`,
-    `norm_num`, and `ring` passes.  Designed to close most PMF probability
-    equalities in a single call.
-
-  * `pmf_norm` — `pmf_simp` plus `omega` for leftover natural-number goals.
-    Use when list/array index bounds appear alongside probability goals.
 -/
 
 /-- `pmf_simp` applies a curated `simp only` lemma set for PMF goals,
-    followed by fallback passes of `simp`, `norm_num`, and `ring`.
+    followed by fallback passes of `simp`, `norm_num`, and `ring`. ***To be tested!***
     It handles:
     - Tsum → finite sum collapse (`tsum_fintype`, `Fin.sum_univ_*`, `Fintype.sum_bool`)
     - PMF monad laws and application (`pure_bind`, `bind_apply`, `bind_const`, …)
@@ -330,7 +321,9 @@ macro "pmf_simp" : tactic =>
     <;> try norm_num
     <;> try ring_nf))
 
-/-- `pmf_norm` extends `pmf_simp` with `omega` for natural-number side goals. -/
+/-- `pmf_norm` extends `pmf_simp` with `omega` for natural-number side goals.
+    Use when list/array index bounds appear alongside probability goals. ***To be tested!**
+-/
 macro "pmf_norm" : tactic =>
   `(tactic| (
     try pmf_simp
@@ -340,7 +333,8 @@ macro "pmf_norm" : tactic =>
 
 
 /-! ================================================================
-    LAYER C: Standalone Derived Lemmas
+    LAYER C: Standalone Derived Lemmas, lemmas that were useful up
+    until now.
     ================================================================ -/
 
 /-- `uniformOfFintype (Fin 1)` is `pure 0` — a degenerate uniform distribution.
