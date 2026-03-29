@@ -14,14 +14,14 @@ import ARA.Basic
 
   Algorithm:
     1. If the list is empty, return the empty list.
-    2. If the list has one element, return the list itself (it is already sorted).
     3. Otherwise, select a pivot element p from the list uniformly at random.
     4. Partition the remaining elements into two sublists:
-        - L₁ = {x ∈ L | x < p}
-        - L₂ = {x ∈ L | x ≥ p}
+        - L₁ = {x ∈ L\{p} | x < p}
+        - L₂ = {x ∈ L\{p} | x ≥ p}
         by doing one traversal of the list, comparing each element to the pivot
         and placing it in the appropriate sublist.
-    5. Recursively apply quicksort to L₁ and L₂ to obtain sorted sublists S₁ and S₂.
+    5. Recursively apply quicksort to L₁ and L₂ (whose lengths are strictly smaller
+    than the original list) to obtain sorted sublists S₁ and S₂.
     6. Return the concatenation of S₁, [p], and S₂: S₁ ++ [p] ++ S₂.
 
   We first implement the algorithm not randomized: QuickSort_NR
@@ -74,29 +74,29 @@ pure : α → IO α takes a : α and returns a function that takes a state s : S
 and returns the pair (a, s) i.e. (pure a) : S → α × S, s ↦ (a, s).
 
 Bind : IO α → (α → IO β) → IO β takes an IO α action act, and a function f : α → IO β
-and returns a new IO β action that represents the sequential execution of the two actions
+and returns an IO β action that represents the sequential execution of the two actions
 i.e. (act.bind f) : S → β × S, s ↦ (f (act s).1) (act s).2
 -/
 /-!
-To be completely pragmatic: Lean cannot access to these states at all and their underlying
+To be completely pragmatic: Lean cannot access to these states (S) at all and their underlying
 representation is not existant. It is not a bit string, it is not a memory map, and it
 contains absolutely zero data. It is a trick played on the type checker
 to force it to sequence operations correctly.
 
 We split between what happens when we write
-the code and what happens when you run it:
+the code and what happens when we run it:
 
 1. Compile Time: The Phantom Token
 
 In Lean's internal code, the state of the universe S is defined like this:
-'
+''
 opaque IO.RealWorld.nonemptyType : NonemptyType.{0}
-/--
+/-
 A representation of "the real world" that's used in `IO` monads to ensure
-that `IO` actions are not reordered.
+that `IO` actions are ordered correctly.
 -/
 @[expose] def IO.RealWorld : Type := IO.RealWorld.nonemptyType.type
-'
+''
 What is missing: there is no = sign, no data structures, and no bit strings.
 It is an opaque type (often called a phantom type).
 We tell the mathematical theorem prover that a set called RealWorld exists,
@@ -113,7 +113,10 @@ Lean's type checker is forced to put Step A before Step B
 altough there is no actual data being passed around. This is
 kinda a syntactical trick to play with Lean's compiler
 rules and here for the IO monad it is used to enforce the correct
-sequencing of IO operations.
+sequencing of IO operations which serves concrete purposes
+(e.g. ensuring that we do not read from a file before writing
+to it, or that we do not generate a random number before
+seeding the random number generator).
 
 2. Runtime: Type Erasure
 
@@ -133,9 +136,7 @@ If the token contains no data, what actually happens when we run a code with a p
 /-
 We use the key word "Partial" because the function
 is not structurally recursive anymore due to the
-random pivot selection and proving termination
-through monadic bind operations is complex and
-mathematically heavy.
+random pivot selection.
 -/
 
 partial def QuickSort_Rand : List ℕ → IO (List ℕ)
@@ -144,7 +145,7 @@ partial def QuickSort_Rand : List ℕ → IO (List ℕ)
   let idx <- IO.rand 0 (L.length - 1) -- Uniformly select an index at random for the pivot
   let pivot := (L[idx]?).getD 0
   /-
-  We do this except handling (if idx is within bound then , otherwise we take )
+  We do this except handling (if idx is within bound then ..., otherwise we take ...)
   to satisfy the type checker, so that we avoid proving that idx is within the bounds,
   but we know idx is always valid since it is generated in the correct range.
   -/
@@ -170,16 +171,22 @@ partial def QuickSort_Rand : List ℕ → IO (List ℕ)
     we can prove that any pivot drawn from it (with positive probability) is in L and thus the function f is
     well defined on the support of the pivot distribution.
 
-  - So, first we can define a pivot distribution that is uniform over the elements of the list L:
-    pivot_dist : PMF ℕ := PMF.uniformOfFinset (L.toFinset) (by simp) where L is the input list.
+  - So, first we can define a pivot distribution that is uniform over the elements of the list L
+    (which is equivalent to being uniform over the indices of the list L):
+    idx_pivot_dist : PMF ℕ := PMF.uniformOfFintype (Fin L.length) where L is the input list.
 
-  - Secondly, we can define the function ℕ → PMF (List ℕ) partitioning step that takes any pivot and
-    returns the two sublists. fun pivot =>
-      let L1 := L.filter (fun x => x < pivot)
-      let L2 := L.filter (fun x => x ≥ pivot)
-      let S1 ← QuickSort_A L1
-      let S2 ← QuickSort_A L2
-      PMF.pure (S1 ++ [pivot] ++ S2)
+  - Secondly, we can define the function ℕ × Prop → PMF (List ℕ) partitioning step that takes any pivot and the
+    proof that the pivot is in the list and returns the two sublists:
+     fun idx_pivot h_idx_pivot =>
+      let pivot := L[idx_pivot]
+      let rest := L.eraseIdx idx_pivot
+
+      let L1 := rest.filter (fun x => x < pivot)
+      let L2 := rest.filter (fun x => x ≥ pivot)
+      do
+        let S1 ← QuickSort_A L1
+        let S2 ← QuickSort_A L2
+        return (S1 ++ [pivot] ++ S2)
 
 -/
 noncomputable def QuickSort_A : List ℕ → PMF (List ℕ) := fun
@@ -250,12 +257,12 @@ lemma prob_quicksort_singleton (n : ℕ) : QuickSort_A [n] [n] = 1 := by
     change ((PMF.pure []).bind (fun S1 => PMF.pure (S1 ++ [n]))) [n] = 1
     simp
   simpa [QuickSort_A, Functor.map] using hdet
--- This was tedious and absolutely non natural (did it with a local agent).
+-- This was tedious and less natural.
 
 
 /-
   Lemma: The probability that QuickSort_A on a list of two distinct elements
-  returns the sorted list is exactly 1 (100%).
+  returns the sorted list is exactly 1.
 -/
 lemma prob_quicksort_two_distinct (a b : ℕ) (h : a ≠ b) : QuickSort_A [a, b] [min a b, max a b] = 1 := by
   by_cases hab : a < b
