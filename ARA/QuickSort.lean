@@ -150,16 +150,16 @@ lemma Correctness_Quicksort_A: ∀ L : List ℕ, ∃ Output : List ℕ,
       use Output
       constructor
       · -- Show QuickSort_A L = PMF.pure Output
-        have h_const : ∀ idx : Fin L.length, ∀ _ : idx ∈ (PMF.uniformOfFintype (Fin L.length)).support,
+        have h_const : ∀ idx : Fin L.length,
           (let pivot := L[idx]
            let rest := L.eraseIdx idx
            let L1 := rest.filter (fun x => decide (x < pivot))
            let L2 := rest.filter (fun x => decide (x ≥ pivot))
            PMF.bind (QuickSort_A L1) fun S1 =>
            PMF.bind (QuickSort_A L2) fun S2 => PMF.pure (S1 ++ [pivot] ++ S2)) =
-          PMF.pure Output := fun idx _ => (hOutput idx).1
+          PMF.pure Output := fun idx => (hOutput idx).1
         calc QuickSort_A L
-            = (PMF.uniformOfFintype (Fin L.length)).bindOnSupport fun idx _ =>
+            = (PMF.uniformOfFintype (Fin L.length)).bind fun idx =>
                 let pivot := L[idx]
                 let rest := L.eraseIdx idx
                 let L1 := rest.filter (fun x => decide (x < pivot))
@@ -167,8 +167,8 @@ lemma Correctness_Quicksort_A: ∀ L : List ℕ, ∃ Output : List ℕ,
                 PMF.bind (QuickSort_A L1) fun S1 =>
                 PMF.bind (QuickSort_A L2) fun S2 => PMF.pure (S1 ++ [pivot] ++ S2) := by
               rw [QuickSort_A]; rfl
-          _ = (PMF.uniformOfFintype (Fin L.length)).bindOnSupport fun _ _ => PMF.pure Output := by
-              congr 1; funext idx h; exact h_const idx h
+          _ = (PMF.uniformOfFintype (Fin L.length)).bind fun _ => PMF.pure Output := by
+              congr 1; funext idx; exact h_const idx
           _ = PMF.pure Output := PMF.bind_const _ _
       · exact ⟨hSorted, hPerm⟩
 
@@ -264,7 +264,7 @@ lemma QuickSort_A_eq_pure_mergeSort (L : List ℕ) :
   · exact hL_ne ( by unfold QuickSort_A; rfl );
   · -- By definition of `QuickSort_A`, we know that `QuickSort_A (head :: tail)` is the bind of the uniform distribution over the indices of `head :: tail` with the function that sorts the list.
     haveI : Nonempty (Fin (head :: tail).length) := ⟨(0 : Fin (head :: tail).length), by simp⟩
-    have h_bind : QuickSort_A (head :: tail) = PMF.bindOnSupport (PMF.uniformOfFintype (Fin (head :: tail).length)) (fun idx_pivot _ => PMF.bind (QuickSort_A ((head :: tail).eraseIdx idx_pivot |>.filter (· < (head :: tail)[idx_pivot]))) (fun S1 => PMF.bind (QuickSort_A ((head :: tail).eraseIdx idx_pivot |>.filter (· ≥ (head :: tail)[idx_pivot]))) (fun S2 => PMF.pure (S1 ++ [(head :: tail)[idx_pivot]] ++ S2)))) := by
+    have h_bind : QuickSort_A (head :: tail) = (PMF.uniformOfFintype (Fin (head :: tail).length)).bind (fun idx_pivot => PMF.bind (QuickSort_A ((head :: tail).eraseIdx idx_pivot |>.filter (· < (head :: tail)[idx_pivot]))) (fun S1 => PMF.bind (QuickSort_A ((head :: tail).eraseIdx idx_pivot |>.filter (· ≥ (head :: tail)[idx_pivot]))) (fun S2 => PMF.pure (S1 ++ [(head :: tail)[idx_pivot]] ++ S2)))) := by
       rw [QuickSort_A];
       rfl;
     -- By definition of `QuickSort_A`, we know that `QuickSort_A ((head :: tail).eraseIdx idx_pivot |>.filter (· < (head :: tail)[idx_pivot]))` and `QuickSort_A ((head :: tail).eraseIdx idx_pivot |>.filter (· ≥ (head :: tail)[idx_pivot]))` are both equal to `PMF.pure (mergeSort ((head :: tail).eraseIdx idx_pivot |>.filter (· < (head :: tail)[idx_pivot])))` and `PMF.pure (mergeSort ((head :: tail).eraseIdx idx_pivot |>.filter (· ≥ (head :: tail)[idx_pivot])))` respectively.

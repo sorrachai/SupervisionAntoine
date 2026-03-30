@@ -249,7 +249,7 @@ lemma prob_quicksort_singleton (n : ℕ) : QuickSort_A [n] [n] = 1 := by
   unfold QuickSort_A
   simp only [List.length_singleton]
   rw [hunif]
-  rw [PMF.pure_bindOnSupport]
+  rw [PMF.pure_bind]
 -- The function we bind with is the one that takes the pivot
 -- and returns the sorted list, which in this case is just
 -- the identity function on [n].
@@ -284,7 +284,7 @@ lemma prob_quicksort_two_distinct (a b : ℕ) (h : a ≠ b) : QuickSort_A [a, b]
           (fun S1 => (PMF.pure []).bind (fun a_1 => PMF.pure (S1 ++ a :: (a_1 ++ [b])))))
           [a, b] = 1
       simp
-    simp [QuickSort_A, PMF.bindOnSupport_eq_bind, hab, hnot, hmin, hmax, hfilter]
+    simp [QuickSort_A, hab, hnot, hmin, hmax, hfilter]
     set t : ENNReal :=
       (do
           let S1 ← PMF.pure []
@@ -317,7 +317,7 @@ lemma prob_quicksort_two_distinct (a b : ℕ) (h : a ≠ b) : QuickSort_A [a, b]
           (fun x => (PMF.pure []).bind (fun a_1 => PMF.pure (x ++ b :: (a_1 ++ [a])))))
           [b, a] = 1
       simp
-    simp [QuickSort_A, PMF.bindOnSupport_eq_bind, hba, hnot, hmin, hmax, hfilter]
+    simp [QuickSort_A, hba, hnot, hmin, hmax, hfilter]
     set t : ENNReal :=
       (do
           let x ← PMF.pure []
