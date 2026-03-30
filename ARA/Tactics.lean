@@ -399,4 +399,16 @@ lemma pmf_uniform_fin_bind_const_prob {β : Type*} {n : ℕ} [NeZero n]
   simp only [hv, Finset.mul_sum]
   exact ennreal_inv_nsmul_cancel v
 
+/-- When all branches produces the same PMF, 'bindOnSupport' collapses to that PMF. -/
+lemma pmf_bindOnSupport_eq_of_forall_eq {α β : Type*} (p : PMF α)
+    (f : (a : α) → a ∈ p.support → PMF β)
+    (q : PMF β) (hfq : ∀ a ha, f a ha = q) :
+    p.bindOnSupport f = q := by
+  ext b
+  simp only [PMF.bindOnSupport_apply]
+  refine tsum_congr_of_supported (fun a => ?_) fun a => by simp only [Set.mem_setOf_eq, hfq]
+  by_cases ha : a ∈ p.support
+  · simp only [ha, hfq a ha, q b]
+  · simp only [ha, Set.mem_setOf_eq, not_false_eq_true, true_and, hfq]
+
 end ARA
