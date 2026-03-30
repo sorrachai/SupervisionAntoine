@@ -8,8 +8,12 @@ This module contains the full correctness proof for `QuickSort_A`:
 the randomized quicksort always returns the sorted list with probability 1.
 
 ## Main Result
-- `QuickSort_A_eq_pure_mergeSort`: QuickSort_A L = PMF.pure (List.mergeSort L)
-- `Correctness_Quicksort_A`: QuickSort_A L (List.mergeSort L) = 1
+- QuickSort_A is deterministic (that is a pure distribution) i.e.
+  `QuickSort_A_eq_pure_mergeSort`: QuickSort_A L = PMF.pure (List.mergeSort L)
+
+- Since List.mergeSort L is the sorted version of L, the correctness of the
+  algorithm follows i.e.
+  `Correctness_Quicksort_A`: QuickSort_A L (List.mergeSort L) = 1
 
 ## Helper Lemmas
 - `perm_getElem_cons_eraseIdx`: eraseIdx gives back a permutation
@@ -21,11 +25,7 @@ the randomized quicksort always returns the sorted list with probability 1.
 -/
 
 /-
-PROBLEM
-QuickSort_A is deterministic: it always returns the sorted list.
-
-PROVIDED SOLUTION
-By strong induction on L.length.
+QuickSort_A is deterministic: it always returns the sorted list. This follows by strong induction on L.length.
 
 Base case (L = []): QuickSort_A [] = PMF.pure [] = PMF.pure (mergeSort []) by List.mergeSort_nil.
 
@@ -157,13 +157,12 @@ lemma QuickSort_A_eq_pure_mergeSort (L : List ℕ) :
     split_ifs <;> simp_all +decide [ PMF.pure_apply ]
 
 /-
-One can try to prove the correctness:
-The probability that QuickSort_A on a list of two distinct elements
-returns the sorted list is 1 (100%).
+Quicksort_A is correct: it always returns the sorted list with probability 1.
+This follows from the previous lemma and the fact that List.mergeSort L = L.sorted ?
 -/
 lemma Correctness_Quicksort_A (L : List ℕ):
-  QuickSort_A L (List.mergeSort L) = 1 := by
-  rw [QuickSort_A_eq_pure_mergeSort]
+  QuickSort_A L (L.sort) = 1 := by
+  rw [QuickSort_A_eq_pure_mergeSort];
   simp
 
 end ARA
