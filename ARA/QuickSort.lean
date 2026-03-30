@@ -8,12 +8,12 @@ This module contains the full correctness proof for `QuickSort_A`:
 the randomized quicksort always returns the sorted list with probability 1.
 
 ## Main Result
-- QuickSort_A is deterministic (that is a pure distribution) i.e.
+- QuickSort_A is deterministic (that is a pure distribution)
   `QuickSort_A_eq_pure_mergeSort`: QuickSort_A L = PMF.pure (List.mergeSort L)
 
 - Since List.mergeSort L is the sorted version of L, the correctness of the
-  algorithm follows i.e.
-  `Correctness_Quicksort_A`: QuickSort_A L (List.mergeSort L) = 1
+  algorithm follows `Correctness_Quicksort_A`:
+  QuickSort_A L (Output) = 1 → (Output.SortedLE ∧ List.Perm Output L)
 
 ## Helper Lemmas
 - `perm_getElem_cons_eraseIdx`: eraseIdx gives back a permutation
@@ -29,7 +29,8 @@ QuickSort_A is deterministic: it always returns the sorted list. This follows by
 
 Base case (L = []): QuickSort_A [] = PMF.pure [] = PMF.pure (mergeSort []) by List.mergeSort_nil.
 
-Inductive case (L = head :: tail): QuickSort_A L unfolds to a bindOnSupport over uniformOfFintype (Fin L.length). For each pivot index idx_pivot, the branch:
+Inductive case (L = head :: tail): QuickSort_A L unfolds to a bindOnSupport over uniformOfFintype (Fin L.length).
+For each pivot index idx_pivot, the branch:
 1. Sets pivot = L[idx_pivot], rest = L.eraseIdx idx_pivot
 2. Filters rest into L1 (< pivot) and L2 (≥ pivot)
 3. Recursively calls QuickSort_A L1 and QuickSort_A L2
@@ -74,8 +75,12 @@ lemma partition_sort_concat_perm (L : List ℕ) (i : Fin L.length) :
     let L1 := rest.filter (fun x => decide (x < pivot))
     let L2 := rest.filter (fun x => decide (x ≥ pivot))
     (L1.mergeSort ++ [pivot] ++ L2.mergeSort).Perm L := by
-  -- By transitivity of permutations, we can chain these steps together.
-  have h_chain : List.Perm (List.mergeSort (List.filter (fun x => x < L[i]) (L.eraseIdx i)) (fun a b => decide (a ≤ b)) ++ [L[i]] ++ List.mergeSort (List.filter (fun x => x ≥ L[i]) (L.eraseIdx i)) (fun a b => decide (a ≤ b))) (List.filter (fun x => x < L[i]) (L.eraseIdx i) ++ [L[i]] ++ List.filter (fun x => x ≥ L[i]) (L.eraseIdx i)) := by
+  -- By transitivity of permutations, we can chain these steps together:
+  -- 1. The mergeSort of the partitioned lists is a permutation of the concatenation of the partitioned lists.
+  -- 2. The concatenation of the partitioned lists is a permutation of the original list with the pivot element moved to the front.
+  have h_chain :
+  List.Perm (List.mergeSort
+  (List.filter (fun x => x < L[i]) (L.eraseIdx i)) (fun a b => decide (a ≤ b)) ++ [L[i]] ++ List.mergeSort (List.filter (fun x => x ≥ L[i]) (L.eraseIdx i)) (fun a b => decide (a ≤ b))) (List.filter (fun x => x < L[i]) (L.eraseIdx i) ++ [L[i]] ++ List.filter (fun x => x ≥ L[i]) (L.eraseIdx i)) := by
     apply_rules [ List.Perm.append, List.mergeSort_perm ];
     rfl;
   have h_odd_kill : List.Perm (List.filter (fun x => x < L[i]) (L.eraseIdx i) ++ [L[i]] ++ List.filter (fun x => x ≥ L[i]) (L.eraseIdx i)) (L[i] :: L.eraseIdx i) := by
@@ -157,12 +162,101 @@ lemma QuickSort_A_eq_pure_mergeSort (L : List ℕ) :
     split_ifs <;> simp_all +decide [ PMF.pure_apply ]
 
 /-
-Quicksort_A is correct: it always returns the sorted list with probability 1.
-This follows from the previous lemma and the fact that List.mergeSort L = L.sorted ?
+Quicksort_A is correct: For any list L, the list that has probability 1 through
+Quicksort_A L is always sorted and is a permutation of L.
+This follows from the previous lemma, the fact that List.mergeSort L is sorted
+and a permutation of L.
 -/
 lemma Correctness_Quicksort_A (L : List ℕ):
-  QuickSort_A L (L.sort) = 1 := by
-  rw [QuickSort_A_eq_pure_mergeSort];
-  simp
+  ∃ Output : List ℕ, QuickSort_A L (Output) = 1 ∧ (Output.SortedLE ∧ Output.Perm L) := by
+  rw [QuickSort_A_eq_pure_mergeSort L]
+  use List.mergeSort L
+  simp [PMF.pure_apply]
+  constructor
+  · exact List.sortedLE_mergeSort
+  · exact List.mergeSort_perm L (fun a b => decide (a ≤ b))
+
+/-
+Direct proof by strong induction on L.length.
+This avoids the detour through QuickSort_A_eq_pure_mergeSort.
+
+Proof structure:
+- Base case (L = []): QuickSort_A [] has probability 1 on [], which is sorted and a permutation of [].
+- Inductive case (L = head :: tail):
+  1. By IH, for all L' with L'.length < L.length, QuickSort_A produces a sorted permutation with prob 1.
+  2. For each pivot index, QuickSort_A partitions L into L1 (< pivot) and L2 (≥ pivot).
+  3. By IH, QuickSort_A L1 and QuickSort_A L2 return sorted permutations with prob 1.
+  4. Concatenating sorted partitions with the pivot yields a sorted permutation of L.
+  5. Since all branches deterministically produce the same result, prob = 1.
+-/
+lemma Correctness_Quicksort_A_bis:
+  ∀ L : List ℕ, ∃ Output : List ℕ, QuickSort_A L (Output) = 1 ∧ Output.SortedLE ∧ Output.Perm L := by
+  -- Proof by strong induction on L.length
+  intro L
+  -- Bind the length of L to n and generalize L so the induction hypothesis
+  -- applies to any list of strictly smaller length.
+  induction' hn : L.length using Nat.strong_induction_on with n ih generalizing L
+  by_cases h : n = 0
+  · simp [h] at hn
+    simp [hn]
+    unfold QuickSort_A
+    grind
+  · have h_nonempty : L ≠ [] := by grind
+    unfold QuickSort_A
+    match L with
+    | [] => contradiction
+    | head::tail =>
+      let L := head :: tail
+      -- For each pivot index, we will show that the partitioned lists are
+      -- sorted permutations of their respective partitions with probability 1.
+      haveI : Nonempty (Fin L.length) := ⟨0, by grind⟩
+      have idx_pivot_dist := PMF.uniformOfFintype (Fin L.length)
+      have h_partition : ∀ idx_pivot : Fin L.length,
+        let pivot := L[idx_pivot]
+        let rest := L.eraseIdx idx_pivot
+        let L1 := rest.filter (fun x => decide (x < pivot))
+        let L2 := rest.filter (fun x => decide (x ≥ pivot))
+        ∃ Output : List ℕ,
+        PMF.bind (QuickSort_A L1)
+        (fun S1 =>
+        PMF.bind (QuickSort_A L2) (fun S2 => PMF.pure (S1 ++ [pivot] ++ S2))) (Output) = 1
+        ∧ Output.SortedLE ∧ Output.Perm L := by
+        intro idx_pivot
+        let pivot := L[idx_pivot]
+        let rest := L.eraseIdx idx_pivot
+        let L1 := rest.filter (fun x => decide (x < pivot))
+        let L2 := rest.filter (fun x => decide (x ≥ pivot))
+        /- By ih, since L1.length < L.length and L2.length < L.length,
+        we know that QuickSort_A L1 and QuickSort_A L2 return sorted
+        permutations with probability 1 on a certain respective outputs
+        Output1 and Output2 that are sorted and are permutations
+        of L1 and L2 respectively.-/
+        obtain ⟨Output1, ⟨Mass1, ⟨Sorted1, Perm1⟩⟩⟩ := by
+          apply ih L1.length
+          grind
+          rfl
+        obtain ⟨Output2, ⟨Mass2, ⟨Sorted2, Perm2⟩⟩⟩ := by
+          apply ih L2.length
+          grind
+          rfl
+        use Output1 ++ [pivot] ++ Output2
+        constructor
+        · -- The probability that the branch corresponding to idx_pivot
+          -- returns Output1 ++ [pivot] ++ Output2 is Mass1 * Mass2, which is 1 * 1 = 1.
+          sorry
+        · constructor
+          · -- One has to show that Output1 ++ [pivot] ++ Output2 is sorted,
+            -- which follows from the fact that Output1 is sorted, Output2
+            -- is sorted and all elements of Output1 are less than pivot and
+            -- all elements of Output2 are greater than or equal to pivot.
+            sorry
+          · -- One has to show that Output1 ++ [pivot] ++ Output2 is a
+            -- permutation of L, which follows from the fact that Output1
+            -- is a permutation of L1, Output2 is a permutation of L2 and
+            -- the fact that L1 ++ [pivot] ++ L2 is a permutation of L.
+            sorry
+
+
+
 
 end ARA

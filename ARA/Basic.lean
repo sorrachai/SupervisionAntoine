@@ -5,7 +5,6 @@ import Mathlib.Data.Rat.Defs
 import Mathlib.Probability.Distributions.Uniform
 import Mathlib.Data.Fintype.Basic
 import Mathlib.Data.Fin.Basic
-import Mathlib.Data.List.Sort
 import Mathlib.Tactic
 
 /-
