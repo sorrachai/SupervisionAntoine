@@ -200,7 +200,7 @@ noncomputable def QuickSort_A : List ℕ → PMF (List ℕ) := fun
   let idx_pivot_dist := PMF.uniformOfFintype (Fin L.length)
 
   -- Step 2: Partitioning step function (together with the bindOnSupport operation)
-  idx_pivot_dist.bindOnSupport fun idx_pivot h_idx_pivot => (
+  idx_pivot_dist.bind fun idx_pivot => (
     let pivot := L[idx_pivot]
     let rest := L.eraseIdx idx_pivot
 

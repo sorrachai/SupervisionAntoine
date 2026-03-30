@@ -354,7 +354,7 @@ lemma PMF.bindOnSupport_const {α β : Type*} (p : PMF α)
 #check PMF.bind_const
 #check PMF.bindOnSupport_const
 
-/--/
+/-
 /-- `uniformOfFintype (Fin 1)` is `pure 0` — a degenerate uniform distribution.
     Useful for singleton-list base cases in recursive algorithms. -/
 lemma pmf_uniformOfFintype_fin_one :
