@@ -207,6 +207,18 @@ advantages of all of them; e.g. one can show a correspondence between the run-
 ning time of a deeply-embedded algorithm and a cost function specified as a
 recurrence directly in the logic, so that results obtained about the latter have a
 formal connection to the former.
+
+
+- Extend TimeM to any monad (like WriterT) in particular the extension to PMF shopuld look like Rnd
+- Have a framework where we can write algorithms abstractly and gets two version for free: the
+implemented version like with IO.rand and the analysis version with PMF (non computable).
+start with a simple typeclass toy example, toy algorithm. Like sample a random number.
+
+For example "toss a single coin" is abstraction, then it should output a algorithm that uses IO.rand
+and an analysis version that uses PMF. Then we can write more complex algorithms like quicksort and get the same thing: an implemented version and an analysis version. We can then prove properties about the analysis version and get them for free for the implemented version.
+
+I could write a statement about deterministic algorithm (i.e. the PMF is pure) and then have some lemmas to show
+and make the correctness analysis of certain algorithm simpler by using induction. Correctness of quicksort
 -/
 
 namespace ARA

@@ -22,6 +22,7 @@ This is equivalent to a `WriterT T PMF` monad transformer stack, where:
 - `PMF` provides the probability backbone (Giry monad)
 - `WriterT T` accumulates costs additively
 
+we could extend TimeM
 
 ### Monad Operations
 
