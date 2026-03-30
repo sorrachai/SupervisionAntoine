@@ -191,8 +191,10 @@ attribute [grind =] PMF.pure_apply
 -- `PMF.bind` applied pointwise is `∑' a, p a * (f a) b`.
 attribute [grind =] PMF.bind_apply
 
--- `PMF.map f p` or `f <$> p` (defined as `PMF.bind p (fun a => PMF.pure (f a))`, litteraly is
--- in mathematical terms the pushforward distribution of `p` by `f`: p_f or f#p) applied pointwise
+-- `PMF.map f p` or `f <$> p` or ` p.map f` (defined as `PMF.bind p (fun a => PMF.pure (f a))`, litteraly is
+-- in mathematical terms the pushforward distribution of `p` by `f`: p_f or f#p) applied pointwise.
+-- The probability of getting `b` from `f <$> p` is the sum over all `a` satisfying `f a = b`
+-- of the probability of getting `a` from `p`.
 attribute [grind =] PMF.map_apply
 
 -- `map` over `pure`: `f <$> pure a = pure (f a)`.
