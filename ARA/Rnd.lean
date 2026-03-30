@@ -9,8 +9,8 @@ and the running time distribution of randomized algorithms.
 
 ## Design
 
-The key insight is that a randomized computation with cost tracking is a
-**joint distribution** over `(output, cost)` pairs:
+The insight is that a randomized computation with cost tracking is a
+joint distribution over `(output, cost)` pairs:
 
 ```
 Rnd T α ≅ PMF (α × T)
@@ -22,14 +22,17 @@ This is equivalent to a `WriterT T PMF` monad transformer stack, where:
 - `PMF` provides the probability backbone (Giry monad)
 - `WriterT T` accumulates costs additively
 
+
 ### Monad Operations
 
-- **`pure a`**: Returns `a` with zero cost and probability 1.
-  Formally: `PMF.pure (a, 0)`
+- **`pure a`**: Returns `a` and zero cost with probability 1.
+  Formally : for a : α, `PMF.pure (a, 0)`
 
 - **`bind m f`**: Samples `(a, c₁)` from `m`, then samples `(b, c₂)` from `f a`,
   and returns `(b, c₁ + c₂)`. Probabilities multiply (via PMF bind),
   costs add (via the writer).
+  Formally :  for m : Rnd T α and f : α → Rnd T β, `Rnd.bind f` is defined as
+  m.bind f = m.bind (fun p => (f p.1).bind (fun q => PMF.pure (q.1, p.2 + q.2)))
 
 ### Extraction Functions
 
@@ -57,10 +60,9 @@ point-mass distribution.
 
 ## References
 
-This design follows the "WriterT Cost PMF" approach mentioned in Phase 3 of the
-thesis framework. It is a shallow embedding: algorithms are written directly in
-Lean's logic using `do` notation, and properties are proved about the resulting
-distributions.
+This design follows the "WriterT Cost PMF" approach and is a shallow embedding:
+algorithms are written directly in Lean's logic using `do` notation, and
+properties are proved about the resulting distributions.
 -/
 
 namespace ARA
@@ -91,10 +93,19 @@ noncomputable def pure' [Zero T] (a : α) : Rnd T α :=
     Probabilities multiply (via PMF bind), costs add. -/
 noncomputable def bind' [Add T] (m : Rnd T α) (f : α → Rnd T β) : Rnd T β :=
   m.bind (fun p => (f p.1).bind (fun q => PMF.pure (q.1, p.2 + q.2)))
+/-
+A concrete computation: for ⟨b,c⟩ : T×β we have
+(bind' m f) ⟨e,c⟩ = ∑' ⟨a, c_1⟩, m ⟨a, c_1⟩ * (bind (f a) (fun q => PMF.pure (q.1, c_1 + q.2))) ⟨e,c⟩
+= ∑' ⟨a, c_1⟩, m ⟨a, c_1⟩ * (∑' ⟨b,c_2⟩, (f a) ⟨b,c_2⟩ * (PMF.pure ⟨b, c_1 + c_2⟩) ⟨e,c⟩)
+= ∑' ⟨a,c_1⟩, m ⟨a,c_1⟩ * (if (b = e and ∃ c_2 : T c_1+c_2 = c) then (f a) ⟨e,c_2⟩ else 0)
+-/
 
 /-- Map a function over the output, preserving cost and probability. -/
 noncomputable def map' (f : α → β) (m : Rnd T α) : Rnd T β :=
   m.map (fun p => (f p.1, p.2))
+/-
+A concrete computation
+-/
 
 noncomputable instance [Zero T] : Pure (Rnd T) where
   pure := Rnd.pure'

@@ -40,10 +40,10 @@ example (f : Fin 4 → PMF ℕ) (b : ℕ) (v : ENNReal)
   exact pmf_uniform_fin_bind_const_prob f b v hv
 
 /-! ##### Demo 7: QuickSort two distinct elements (Phase 2)
-The annoying lemma about Quicksort_A now becomes a one-liner:
+The annoying lemma about Quicksort_A seems to resist in our attemps of automation
+(maybe it is easy, to try more the available tools...)
 -/
 lemma prob_quicksort_two_distinct_auto (a b : ℕ) (h : a ≠ b) :
   QuickSort_A [a, b] [min a b, max a b] = 1 := by sorry
-
 
 end ARA
