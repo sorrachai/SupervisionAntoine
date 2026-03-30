@@ -166,7 +166,7 @@ lemma Correctness_Quicksort_A: ∀ L : List ℕ, ∃ Output : List ℕ,
                 let L2 := rest.filter (fun x => decide (x ≥ pivot))
                 PMF.bind (QuickSort_A L1) fun S1 =>
                 PMF.bind (QuickSort_A L2) fun S2 => PMF.pure (S1 ++ [pivot] ++ S2) := by
-              rw [QuickSort_A]; rfl
+              rw [QuickSort_A];
           _ = (PMF.uniformOfFintype (Fin L.length)).bind fun _ => PMF.pure Output := by
               congr 1; funext idx; exact h_const idx
           _ = PMF.pure Output := PMF.bind_const _ _
