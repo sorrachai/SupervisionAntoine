@@ -339,6 +339,22 @@ macro "pmf_norm" : tactic =>
     until now.
     ================================================================ -/
 
+/-- NEW (not in mathlib): When all branches produces the same PMF, 'bindOnSupport' collapses to that PMF. -/
+lemma PMF.bindOnSupport_const {α β : Type*} (p : PMF α)
+    (q : PMF β) :
+    (p.bindOnSupport fun _ _ => q) = q := by
+  ext b
+  have h_eq : (fun a ↦ if p a = 0 then 0 else p a * q b) = fun a ↦ p a * q b := by
+    ext a
+    split_ifs with hp
+    · rw [hp, zero_mul]
+    · rfl
+  simp
+
+#check PMF.bind_const
+#check PMF.bindOnSupport_const
+
+/--/
 /-- `uniformOfFintype (Fin 1)` is `pure 0` — a degenerate uniform distribution.
     Useful for singleton-list base cases in recursive algorithms. -/
 lemma pmf_uniformOfFintype_fin_one :
@@ -364,13 +380,6 @@ lemma pmf_uniformOfFinset_not_mem {α : Type*} {s : Finset α} (hs : s.Nonempty)
     {a : α} (ha : a ∉ s) :
     (PMF.uniformOfFinset s hs) a = 0 := by
   simp [PMF.uniformOfFinset_apply, ha]
-
-/-- If every branch produces the same PMF, `bind` collapses to that PMF.
-    Generalizes `PMF.bind_const` with a pointwise hypothesis. -/
-lemma pmf_bind_eq_of_forall_eq {α β : Type*} (p : PMF α) (f : α → PMF β)
-    (q : PMF β) (hfq : ∀ a, f a = q) :
-    p.bind f = q := by
-  rw [show f = fun _ => q from funext hfq, PMF.bind_const]
 
 /-- `bind` over a finite-type PMF unfolds to a `Finset.sum`. -/
 lemma pmf_bind_apply_fintype {α β : Type*} [Fintype α] (p : PMF α)
@@ -398,17 +407,6 @@ lemma pmf_uniform_fin_bind_const_prob {β : Type*} {n : ℕ} [NeZero n]
   rw [pmf_uniform_fin_bind_apply]
   simp only [hv, Finset.mul_sum]
   exact ennreal_inv_nsmul_cancel v
-
-/-- When all branches produces the same PMF, 'bindOnSupport' collapses to that PMF. -/
-lemma pmf_bindOnSupport_eq_of_forall_eq {α β : Type*} (p : PMF α)
-    (f : (a : α) → a ∈ p.support → PMF β)
-    (q : PMF β) (hfq : ∀ a ha, f a ha = q) :
-    p.bindOnSupport f = q := by
-  ext b
-  simp only [PMF.bindOnSupport_apply]
-  refine tsum_congr_of_supported (fun a => ?_) fun a => by simp only [Set.mem_setOf_eq, hfq]
-  by_cases ha : a ∈ p.support
-  · simp only [ha, hfq a ha, q b]
-  · simp only [ha, Set.mem_setOf_eq, not_false_eq_true, true_and, hfq]
+-/
 
 end ARA
