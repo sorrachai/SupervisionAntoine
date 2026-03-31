@@ -5,6 +5,8 @@ import ARA.Tactics
 # QuickSort Correctness Proof
 
 This module contains the full correctness proof for `QuickSort_A`.
+The proof is somewhat natural once we understand the PMF operations,
+although long and technical. It cwould be nice to improve it.
 -/
 
 namespace ARA
@@ -171,6 +173,5 @@ lemma Correctness_Quicksort_A: ∀ L : List ℕ, ∃ Output : List ℕ,
               congr 1; funext idx; exact h_const idx
           _ = PMF.pure Output := PMF.bind_const _ _
       · exact ⟨hSorted, hPerm⟩
-
 
 end ARA
