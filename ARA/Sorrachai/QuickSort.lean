@@ -2,7 +2,7 @@ import ARA.Tactics
 
 class RandMonad (M : Type → Type) [Monad M] where
   -- Given a nonempty list, pick a random valid index
-  randIdx {α} : (L : List α) → L ≠ [] → M (Fin L.length)
+  randIdx {α} : (L : List α) → 0 < L.length → M (Fin L.length)
 
 def QuickSort [Monad M] [RandMonad M] : List ℕ → M (List ℕ)
   | [] => return []
@@ -21,11 +21,11 @@ decreasing_by all_goals grind
 instance : RandMonad IO where
   randIdx L hne := do
     let i ← IO.rand 0 (L.length - 1)
-    return ⟨i % L.length, Nat.mod_lt i (List.length_pos_iff.mpr hne)⟩
+    return ⟨i % L.length, Nat.mod_lt i hne⟩
 
 noncomputable instance : RandMonad PMF where
   randIdx L hne :=
-    have : Nonempty (Fin L.length) := ⟨⟨0, List.length_pos_iff.mpr hne⟩⟩
+    have : Nonempty (Fin L.length) := ⟨⟨0, hne⟩⟩
     PMF.uniformOfFintype (Fin L.length)
 
 -- IO version (executable)

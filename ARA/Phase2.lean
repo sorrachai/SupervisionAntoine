@@ -189,9 +189,6 @@ partial def QuickSort_Rand : List ℕ → IO (List ℕ)
         return (S1 ++ [pivot] ++ S2)
 
 -/
-
-
-
 noncomputable def QuickSort_A : List ℕ → PMF (List ℕ) := fun
 | [] => PMF.pure []
 | L@(head::tail) => do
