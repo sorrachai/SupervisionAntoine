@@ -118,53 +118,51 @@ open ENNReal PMF
 
 
 /-! ================================================================
-    LAYER A: `grind` Rules (e-matching compatible)
-    ================================================================ -/
+    LAYER A: `@[simp]` Monad Normalization + `@[grind]` Domain Bridge
+    ================================================================
+
+  **Design principle:**
+  - `@[simp]` for the *monad laws* — these are universally safe rewrite rules
+    that normalize any PMF expression (pure_bind, bind_pure, bind_const,
+    bind_bind). Follows Mathlib convention for monad normalization.
+  - `@[grind =]` only for *domain-bridge* lemmas — things that connect the PMF
+    world to concrete arithmetic (bind_apply → tsum, uniformOfFintype_apply →
+    inverse cardinality, ENNReal inverse cancellation). These are the lemmas
+    where `simp` alone can't close the goal but `grind`'s e-matching shines.
+  - `@[grind →]` for forward-reasoning side conditions (ne_zero, ne_top).
+-/
 
 /-! ##### A.1  ENNReal Arithmetic -/
 
-/- Factoring a common inverse weight out of a sum of two branches. -/
 lemma ennreal_inv_mul_add_inv_mul (c a b : ENNReal) :
     c⁻¹ * a + c⁻¹ * b = c⁻¹ * (a + b) := by ring
 
-/-- `n⁻¹ · n = 1` in ENNReal for nonzero natural `n`. -/
 @[grind =]
 lemma ennreal_natCast_inv_mul_self {n : ℕ} [NeZero n] :
     (n : ENNReal)⁻¹ * (n : ENNReal) = 1 :=
   ENNReal.inv_mul_cancel (by exact_mod_cast NeZero.ne n) (ENNReal.natCast_ne_top n)
 
-/-- `n · n⁻¹ = 1` in ENNReal for nonzero natural `n`. -/
 @[grind =]
 lemma ennreal_natCast_mul_inv_self {n : ℕ} [NeZero n] :
     (n : ENNReal) * (n : ENNReal)⁻¹ = 1 :=
   ENNReal.mul_inv_cancel (by exact_mod_cast NeZero.ne n) (ENNReal.natCast_ne_top n)
 
-/-- `(↑n)⁻¹ ≠ 0` when `n` is a natural number (since `↑n ≠ ⊤`). -/
 @[grind →]
 lemma ennreal_natCast_inv_ne_zero {n : ℕ} [NeZero n] :
     (n : ENNReal)⁻¹ ≠ 0 :=
   ENNReal.inv_ne_zero.mpr (ENNReal.natCast_ne_top n)
 
-/-- `(↑n)⁻¹ ≠ ⊤` when `n ≠ 0`. -/
 @[grind →]
 lemma ennreal_natCast_inv_ne_top {n : ℕ} [NeZero n] :
     (n : ENNReal)⁻¹ ≠ ⊤ :=
   ENNReal.inv_ne_top.mpr (by exact_mod_cast NeZero.ne n)
 
-/-- Splitting `a / 2 + a / 2 = a`. -/
--- NOTE: Like `inv_two_add_inv_two`, this is specific to the constant 2.
--- Useful but not general enough for grind in arbitrary randomized algorithm analysis.
--- attribute [grind =] ENNReal.add_halves'
 lemma ennreal_add_halves' (a : ENNReal) : a / 2 + a / 2 = a :=
   ENNReal.add_halves a
 
-/- Splitting common denominator: `a / c + b / c = (a + b) / c`. -/
--- NOTE: `ENNReal.div_add_div_same` is a general algebraic identity that is useful
--- for any randomized algorithm analysis involving weighted sums.
 attribute [grind =] ENNReal.div_add_div_same
 
-/-- Summing `n` copies of `n⁻¹ * t` over `Fin n` gives `t`.
-    This is the core normalization for uniform-distribution bind goals. -/
+/-- Summing `n` copies of `n⁻¹ * t` over `Fin n` gives `t`. -/
 lemma ennreal_inv_nsmul_cancel {n : ℕ} [NeZero n] (t : ENNReal) :
     ∑ _i : Fin n, (n : ENNReal)⁻¹ * t = t := by
   rw [Finset.sum_const]; simp [Fintype.card_fin]
@@ -174,114 +172,66 @@ lemma ennreal_inv_nsmul_cancel {n : ℕ} [NeZero n] (t : ENNReal) :
   · exact ENNReal.natCast_ne_top n
 
 
-/-! ##### A.2  PMF Monad Laws & Pointwise Application (grind-compatible) -/
+/-! ##### A.2  PMF Monad Laws (`@[simp]` — safe normalization) -/
 
--- Left identity of `bind`: `pure a >>= f = f a`.
+-- These follow Mathlib convention: monad identity/associativity laws are @[simp].
+attribute [simp] PMF.pure_bind    -- `pure a >>= f = f a`
+attribute [simp] PMF.bind_pure    -- `p >>= pure = p`
+attribute [simp] PMF.bind_const   -- `p >>= (fun _ => q) = q`
+attribute [simp] PMF.bind_bind    -- `(p >>= f) >>= g = p >>= (fun a => f a >>= g)`
+attribute [simp] PMF.pure_map     -- `f <$> pure a = pure (f a)`
+attribute [simp] PMF.map_id       -- `id <$> p = p`
+
+-- Also register for grind (grind and simp are independent engines).
 attribute [grind =] PMF.pure_bind
-
--- Right identity of `bind`: `p >>= pure = p`.
 attribute [grind =] PMF.bind_pure
-
--- Associativity of `bind`: `(p >>= f) >>= g = p >>= (fun a => f a >>= g)`.
 attribute [grind =] PMF.bind_bind
 
--- `PMF.pure a` applied to `a'` is `if a' = a then 1 else 0`.
-attribute [grind =] PMF.pure_apply
 
--- `PMF.bind` applied pointwise is `∑' a, p a * (f a) b`.
-attribute [grind =] PMF.bind_apply
+/-! ##### A.3  PMF Pointwise Application & Distribution Weights (`@[grind =]` — domain bridge) -/
 
--- `PMF.map f p` or `f <$> p` or ` p.map f` (defined as `PMF.bind p (fun a => PMF.pure (f a))`, litteraly is
--- in mathematical terms the pushforward distribution of `p` by `f`: p_f or f#p) applied pointwise.
--- The probability of getting `b` from `f <$> p` is the sum over all `a` satisfying `f a = b`
--- of the probability of getting `a` from `p`.
-attribute [grind =] PMF.map_apply
+-- These expand PMF expressions into concrete arithmetic. Not safe as @[simp]
+-- because they introduce tsum/ite which can blow up, but perfect for grind's
+-- e-matching when the goal already mentions these terms.
+attribute [grind =] PMF.pure_apply            -- `pure a b = if b = a then 1 else 0`
+attribute [grind =] PMF.bind_apply            -- `(p >>= f) b = ∑' a, p a * (f a) b`
+attribute [grind =] PMF.map_apply             -- `(f <$> p) b = ∑' a, if f a = b then p a else 0`
+attribute [grind =] PMF.uniformOfFintype_apply -- `uniformOfFintype α a = (card α)⁻¹`
+attribute [grind =] PMF.uniformOfFinset_apply  -- `uniformOfFinset s a = if a ∈ s then (card s)⁻¹ else 0`
+attribute [grind =] PMF.bernoulli_apply        -- `bernoulli p b = if b then p else 1-p`
+attribute [grind =] Fintype.card_fin           -- `card (Fin n) = n`
+attribute [grind =] Fintype.card_bool          -- `card Bool = 2`
 
--- `map` over `pure`: `f <$> pure a = pure (f a)`.
-attribute [grind =] PMF.pure_map
+-- map/bind interaction laws (grind only — not @[simp] to avoid rewrite loops)
+attribute [grind =] PMF.map_comp       -- `f <$> (g <$> p) = (f ∘ g) <$> p`
+attribute [grind =] PMF.bind_map       -- `(f <$> p) >>= q = p >>= (q ∘ f)`
+attribute [grind =] PMF.map_bind       -- `f <$> (p >>= q) = p >>= (fun a => f <$> q a)`
+attribute [grind =] PMF.bind_pure_comp -- `p >>= (pure ∘ f) = f <$> p`
 
--- `map id = id`: `id <$> p = p`.
-attribute [grind =] PMF.map_id
 
--- `map` composition: `f <$> (g <$> p) = (f ∘ g) <$> p`.
-attribute [grind =] PMF.map_comp
+/-! ##### A.4  Support & bindOnSupport -/
 
--- `bind` of `map`: `(f <$> p) >>= q = p >>= (q ∘ f)`.
-attribute [grind =] PMF.bind_map
-
--- `map` of `bind`: `f <$> (p >>= q) = p >>= (fun a => f <$> q a)`.
-attribute [grind =] PMF.map_bind
-
--- `bind (pure ∘ f) _ = map f _`: `p >>= (pure ∘ f) = f <$> p`.
-attribute [grind =] PMF.bind_pure_comp
-
--- It wouldn't be surprising if we needed more monad laws or map/bind interaction lemmas later
--- as we get into more complex algorithms, but these are the core ones for now.
-
-/-! ##### A.3  Uniform Distribution & Support (grind-compatible) -/
-
--- Weight of each element in `uniformOfFintype`.
-attribute [grind =] PMF.uniformOfFintype_apply
-
--- Weight of each element in `uniformOfFinset`.
-attribute [grind =] PMF.uniformOfFinset_apply
-
--- `Fintype.card (Fin n) = n`.
-attribute [grind =] Fintype.card_fin
-
--- `Fintype.card Bool = 2`.
-attribute [grind =] Fintype.card_bool
-
--- Support of `uniformOfFintype` is everything.
-attribute [grind =] PMF.support_uniformOfFintype
-
--- Support of `uniformOfFinset` is the finset.
-attribute [grind =] PMF.support_uniformOfFinset
-
--- Support of `pure a` is `{a}`.
-attribute [grind =] PMF.support_pure
-
--- Bernoulli distribution applied pointwise.
-attribute [grind =] PMF.bernoulli_apply
-
--- Support membership ↔ nonzero probability.
-attribute [grind =] PMF.mem_support_iff
-
--- Support of `bind` is the union of supports of the branches i.e
--- `b ∈ support p >>= f` <-> `∃ a ∈ support p, b ∈ support (f a)`.
-attribute [grind =] PMF.support_bind
-
--- Support membership for `uniformOfFinset`.
+attribute [grind =] PMF.support_uniformOfFintype    -- support is everything
+attribute [grind =] PMF.support_uniformOfFinset     -- support is the finset
+attribute [grind =] PMF.support_pure                -- support of pure is singleton
+attribute [grind =] PMF.mem_support_iff             -- membership ↔ nonzero prob
+attribute [grind =] PMF.support_bind                -- support of bind
 attribute [grind =] PMF.mem_support_uniformOfFinset_iff
-
-
-/-! ##### A.4  bindOnSupport (grind-compatible) -/
-
--- `pure a` followed by `bindOnSupport f` just applies `f` to `a`.
-attribute [grind =] PMF.pure_bindOnSupport
-
--- Pointwise expansion of `bindOnSupport`.
-attribute [grind =] PMF.bindOnSupport_apply
+attribute [grind =] PMF.pure_bindOnSupport          -- `pure a >>= f = f a _`
+attribute [grind =] PMF.bindOnSupport_apply         -- pointwise expansion
 
 
 /-! ================================================================
-    LAYER B: `pmf_simp` and `pmf_norm` Tactic Macros
+    LAYER B: `pmf_simp` — Probability Computation Tactic
     ================================================================
 
-  These tactics package the entire simp lemma set (including the lemmas
-  that `grind` cannot accept due to pattern restrictions) into a single
-  invocation.  They are the primary workhorse for closing PMF goals.
--/
+  Use `pmf_simp` when computing concrete probability values, e.g.:
+  - `P(X = 3) = 1/12`
+  - `(p.bind f) b = p 0 * (f 0) b + p 1 * (f 1) b`
 
-/-- `pmf_simp` applies a curated `simp only` lemma set for PMF goals,
-    followed by fallback passes of `simp`, `norm_num`, and `ring`. ***To be tested!***
-    It handles:
-    - Tsum → finite sum collapse (`tsum_fintype`, `Fin.sum_univ_*`, `Fintype.sum_bool`)
-    - PMF monad laws and application (`pure_bind`, `bind_apply`, `bind_const`, …)
-    - Uniform / Bernoulli distribution weights
-    - bindOnSupport simplification
-    - Conditional arithmetic (`ite_mul`, `mul_ite`, `Finset.sum_ite_eq`, …)
-    - Basic ENNReal cleanup (`mul_one`, `zero_mul`, `if_true`, …)
+  It collapses tsum to finite sums, applies distribution weights,
+  and cleans up arithmetic. NOT meant for correctness proofs
+  (use `pmf_correct` below for those).
 -/
 macro "pmf_simp" : tactic =>
   `(tactic| (
@@ -323,9 +273,7 @@ macro "pmf_simp" : tactic =>
     <;> try norm_num
     <;> try ring_nf))
 
-/-- `pmf_norm` extends `pmf_simp` with `omega` for natural-number side goals.
-    Use when list/array index bounds appear alongside probability goals. ***To be tested!**
--/
+/-- `pmf_norm` extends `pmf_simp` with `omega` for index bounds. -/
 macro "pmf_norm" : tactic =>
   `(tactic| (
     try pmf_simp
@@ -335,51 +283,26 @@ macro "pmf_norm" : tactic =>
 
 
 /-! ================================================================
-    LAYER C: Standalone Derived Lemmas, lemmas that were useful up
-    until now.
-    ================================================================ -/
+    LAYER C: Reusable Derived Lemmas
+    ================================================================
 
-/-- NEW (not in mathlib): When all branches produces the same PMF, 'bindOnSupport' collapses to that PMF. -/
+  Lemmas proved once, used by name in algorithm-specific proofs.
+  These are the building blocks for correctness and probability proofs.
+-/
+
+/-- When all branches produce the same PMF, `bindOnSupport` collapses. -/
 lemma PMF.bindOnSupport_const {α β : Type*} (p : PMF α)
     (q : PMF β) :
     (p.bindOnSupport fun _ _ => q) = q := by
-  ext b
-  have h_eq : (fun a ↦ if p a = 0 then 0 else p a * q b) = fun a ↦ p a * q b := by
-    ext a
-    split_ifs with hp
-    · rw [hp, zero_mul]
-    · rfl
-  simp
+  ext b; simp [show ∀ a, (if p a = 0 then (0 : ENNReal) else p a * q b) = p a * q b from
+      fun a => by split_ifs with h <;> simp_all]
 
-#check PMF.bind_const
-#check PMF.bindOnSupport_const
-
-/-
-/-- `uniformOfFintype (Fin 1)` is `pure 0` — a degenerate uniform distribution.
-    Useful for singleton-list base cases in recursive algorithms. -/
+/-- `uniformOfFintype (Fin 1)` is `pure 0` — singleton base case. -/
 lemma pmf_uniformOfFintype_fin_one :
     PMF.uniformOfFintype (Fin 1) = PMF.pure (0 : Fin 1) := by
   ext a
   have ha : a = 0 := Fin.ext (by omega)
   subst ha; simp [PMF.uniformOfFintype_apply]
-
-/-- `uniformOfFintype` is never zero on any element. -/
-lemma pmf_uniformOfFintype_ne_zero {α : Type*} [Fintype α] [Nonempty α] (a : α) :
-    (PMF.uniformOfFintype α) a ≠ 0 := by
-  rw [PMF.uniformOfFintype_apply]
-  exact ENNReal.inv_ne_zero.mpr (ENNReal.natCast_ne_top _)
-
-/-- Probability of any element under a `uniformOfFinset` that contains it. -/
-lemma pmf_uniformOfFinset_mem {α : Type*} {s : Finset α} (hs : s.Nonempty)
-    {a : α} (ha : a ∈ s) :
-    (PMF.uniformOfFinset s hs) a = (s.card : ENNReal)⁻¹ := by
-  simp [PMF.uniformOfFinset_apply, ha]
-
-/-- Probability of an element NOT in a `uniformOfFinset` is zero. -/
-lemma pmf_uniformOfFinset_not_mem {α : Type*} {s : Finset α} (hs : s.Nonempty)
-    {a : α} (ha : a ∉ s) :
-    (PMF.uniformOfFinset s hs) a = 0 := by
-  simp [PMF.uniformOfFinset_apply, ha]
 
 /-- `bind` over a finite-type PMF unfolds to a `Finset.sum`. -/
 lemma pmf_bind_apply_fintype {α β : Type*} [Fintype α] (p : PMF α)
@@ -387,9 +310,7 @@ lemma pmf_bind_apply_fintype {α β : Type*} [Fintype α] (p : PMF α)
     (p.bind f) b = ∑ a : α, p a * (f a) b := by
   rw [PMF.bind_apply, tsum_fintype]
 
-/-- Uniform-bind over `Fin n` expressed as `n⁻¹ * ∑ i, …`.
-    This is the workhorse for analyzing algorithms with a uniform random choice
-    over `n` options (e.g., pivot selection in randomized quicksort). -/
+/-- Uniform-bind over `Fin n` expressed as `n⁻¹ * ∑ i, …`. -/
 lemma pmf_uniform_fin_bind_apply {β : Type*} {n : ℕ} [NeZero n]
     (f : Fin n → PMF β) (b : β) :
     ((PMF.uniformOfFintype (Fin n)).bind f) b =
@@ -397,9 +318,9 @@ lemma pmf_uniform_fin_bind_apply {β : Type*} {n : ℕ} [NeZero n]
   rw [pmf_bind_apply_fintype]
   simp [PMF.uniformOfFintype_apply, Fintype.card_fin, Finset.mul_sum]
 
-/-- When all `n` branches of a uniform bind over `Fin n` produce the same
-    probability for a given outcome, that probability equals the common value.
-    (The `n` copies of `n⁻¹ * v` sum to `v`.) -/
+/-- When all branches of a uniform bind over `Fin n` yield the same probability
+    for a given outcome, that probability equals the common value.
+    Core normalization for uniform-distribution computations. -/
 lemma pmf_uniform_fin_bind_const_prob {β : Type*} {n : ℕ} [NeZero n]
     (f : Fin n → PMF β) (b : β) (v : ENNReal)
     (hv : ∀ i, (f i) b = v) :
@@ -407,6 +328,36 @@ lemma pmf_uniform_fin_bind_const_prob {β : Type*} {n : ℕ} [NeZero n]
   rw [pmf_uniform_fin_bind_apply]
   simp only [hv, Finset.mul_sum]
   exact ennreal_inv_nsmul_cancel v
+
+
+/-! ================================================================
+    LAYER D: Correctness Proof Infrastructure
+    ================================================================
+
+  These lemmas and tactics target the *correctness* proof pattern for
+  randomized algorithms that produce deterministic outputs:
+
+    "Every branch of a uniform bind produces the same `PMF.pure Output`,
+     so the whole computation is `PMF.pure Output`."
+
+  This pattern applies to QuickSort, randomized selection, treaps, and
+  any algorithm where randomization affects only performance, not the result.
 -/
+
+/-- **Uniform bind collapse (deterministic output).**
+    If every branch of a uniform bind over `Fin n` produces the same
+    `PMF.pure v`, then the entire bind equals `PMF.pure v`.
+
+    This is the master lemma for proving that randomized algorithms with
+    deterministic outputs are indeed deterministic. -/
+lemma PMF.uniformOfFintype_bind_const_pure {α : Type*} [Fintype α] [Nonempty α]
+    (f : α → PMF β) (v : β)
+    (hv : ∀ a, f a = PMF.pure v) :
+    (PMF.uniformOfFintype α).bind f = PMF.pure v := by
+  conv_lhs => rw [show f = fun _ => PMF.pure v from funext hv]
+  exact PMF.bind_const _ _
+
+#check PMF.bind_const
+#check PMF.bindOnSupport_const
 
 end ARA
