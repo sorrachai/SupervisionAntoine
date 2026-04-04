@@ -191,34 +191,22 @@ partial def QuickSort_Rand : List ℕ → IO (List ℕ)
 -/
 noncomputable def QuickSort_A : List ℕ → PMF (List ℕ) := fun
 | [] => PMF.pure []
-| L@(head::tail) => do
-  -- Step 1: Select a pivot uniformly at random from the list,
-  -- this amount choosing a random index between 0 and L.length - 1.
-  have : Nonempty (Fin L.length) := by
-    rename_i h
-    exact ⟨⟨0, by grind only [= List.length_cons]⟩⟩
+| L@(_::_) =>
+  have nonempty : Nonempty (Fin L.length) := ⟨⟨0, by grind⟩⟩
+
   let idx_pivot_dist := PMF.uniformOfFintype (Fin L.length)
 
-  -- Step 2: Partitioning step function (together with the bindOnSupport operation)
-  idx_pivot_dist.bind fun idx_pivot => (
+  idx_pivot_dist.bind fun idx_pivot => do
     let pivot := L[idx_pivot]
     let rest := L.eraseIdx idx_pivot
+    let L1 := rest.filter (· < pivot)
+    let L2 := rest.filter (· ≥ pivot)
+    let S1 ← QuickSort_A L1
+    let S2 ← QuickSort_A L2
+    return (S1 ++ [pivot] ++ S2)
 
-    let L1 := rest.filter (fun x => x < pivot)
-    let L2 := rest.filter (fun x => x ≥ pivot)
-    do
-      let S1 ← QuickSort_A L1
-      let S2 ← QuickSort_A L2
-      return (S1 ++ [pivot] ++ S2))
-  termination_by L => L.length
-  decreasing_by
-  all_goals
-    have h_rest : rest.length < L.length := by
-      rw [List.length_eraseIdx]
-      grind
-    apply Nat.lt_of_le_of_lt
-    · apply List.length_filter_le
-    · grind
+termination_by L => L.length
+decreasing_by all_goals grind
 -- The definition is surprisingly natural and almost feels like
 -- writing the algorithm in pseudo code: so good point.
 

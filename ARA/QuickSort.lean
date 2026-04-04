@@ -4,17 +4,41 @@ import ARA.Tactics
 /-!
 # QuickSort Correctness Proof
 
-This module contains the full correctness proof for `QuickSort_A`.
-The proof is somewhat natural once we understand the PMF operations,
-although long and technical. It cwould be nice to improve it.
+This module proves the correctness of `QuickSort_A`.
+
+The proof uses the function's own induction principle (`QuickSort_A.induct`) and factors
+out 4 reusable helpers: uniqueness of sorted permutations, sorted concatenation around
+a pivot, and the filter-partition permutation property.
 -/
 
 namespace ARA
 
 open PMF List
 
-/-! ### Permutation lemma: eraseIdx gives back a permutation -/
+/-! ### Helper lemmas -/
 
+/-- The partition-and-recurse step for a given pivot index. -/
+private noncomputable abbrev qs_branch (L : List ℕ) (i : Fin L.length) : PMF (List ℕ) :=
+  (QuickSort_A ((L.eraseIdx i).filter (· < L[i]))).bind fun S1 =>
+  (QuickSort_A ((L.eraseIdx i).filter (· ≥ L[i]))).bind fun S2 =>
+  PMF.pure (S1 ++ [L[i]] ++ S2)
+
+/-- Two sorted ℕ-permutations are equal. -/
+lemma eq_of_sortedLE_perm {l1 l2 : List ℕ}
+    (h1 : l1.SortedLE) (h2 : l2.SortedLE) (hp : l1.Perm l2) : l1 = l2 :=
+  hp.eq_of_pairwise (fun _ _ _ _ hab hba => Nat.le_antisymm hab hba)
+    (sortedLE_iff_pairwise.mp h1) (sortedLE_iff_pairwise.mp h2)
+
+/-- Concatenation `S1 ++ [p] ++ S2` is sorted when `S1 < p ≤ S2` and both sublists sorted. -/
+lemma sorted_concat_pivot {S1 S2 : List ℕ} {p : ℕ}
+    (h1 : S1.SortedLE) (h2 : S2.SortedLE)
+    (hb1 : ∀ x ∈ S1, x < p) (hb2 : ∀ x ∈ S2, p ≤ x) :
+    (S1 ++ [p] ++ S2).SortedLE := by
+  rw [sortedLE_iff_pairwise]; apply pairwise_append.mpr
+  refine ⟨?_, sortedLE_iff_pairwise.mp h2, fun x hx y hy => by grind⟩
+  rw [← sortedLE_iff_pairwise, sortedLE_iff_pairwise]; grind
+
+/-! eraseIdx gives back a permutation -/
 lemma perm_getElem_cons_eraseIdx (L : List ℕ) (i : Fin L.length) :
     L.Perm (L[i] :: L.eraseIdx i) := by
   induction' i with i ih;
@@ -24,278 +48,67 @@ lemma perm_getElem_cons_eraseIdx (L : List ℕ) (i : Fin L.length) :
     (List.Perm.cons _ ( ih _ <| by simpa using ‹i + 1 < List.length ( hd :: tl ) › ) )
     ( List.Perm.swap .. )
 
-lemma Correctness_Quicksort_A: ∀ L : List ℕ, ∃ Output : List ℕ,
-  QuickSort_A L = PMF.pure Output ∧ Output.SortedLE ∧ Output.Perm L := by
-  intro L
-  induction' hn : L.length using Nat.strong_induction_on with n ih generalizing L
-  by_cases h : n = 0
-  · simp only [h, length_eq_zero_iff] at hn
-    simp only [hn, perm_nil, exists_eq_right_right]
-    unfold QuickSort_A
-    grind only [= sortedLE_iff_pairwise, ← Pairwise.nil]
-  · have h_nonempty : L ≠ [] := by grind only [= length_nil]
-    match L with
-    | [] => contradiction
-    | head::tail =>
-      let L := head :: tail
-      have h_nonempty : Nonempty (Fin L.length) := ⟨0, by grind only⟩
-      have idx_pivot_dist := PMF.uniformOfFintype (Fin L.length)
+/-- Filter-partition around a pivot permutes the original list. -/
+lemma perm_filter_partition (L : List ℕ) (i : Fin L.length) :
+    ((L.eraseIdx i).filter (fun x => decide (x < L[i])) ++ [L[i]] ++
+     (L.eraseIdx i).filter (fun x => decide (x ≥ L[i]))).Perm L := by
+  have hc : (L.eraseIdx i).filter (fun x => !(decide (x < L[i]))) =
+            (L.eraseIdx i).filter (fun x => decide (x ≥ L[i])) := by grind
+  have hf := filter_append_perm (fun x => decide (x < L[i])) (L.eraseIdx i)
+  rw [hc] at hf
+  have hmid : ((L.eraseIdx i).filter (fun x => decide (x < L[i])) ++ [L[i]] ++
+               (L.eraseIdx i).filter (fun x => decide (x ≥ L[i]))).Perm
+              (L[i] :: ((L.eraseIdx i).filter (fun x => decide (x < L[i])) ++
+                        (L.eraseIdx i).filter (fun x => decide (x ≥ L[i])))) := by
+    simp only [append_assoc]; grind
+  exact hmid.trans ((Perm.cons _ hf).trans (perm_getElem_cons_eraseIdx L i).symm)
 
-      have h_partition : ∀ idx_pivot : Fin L.length,
-        let pivot := L[idx_pivot]
-        let rest := L.eraseIdx idx_pivot
-        let L1 := rest.filter (fun x => decide (x < pivot))
-        let L2 := rest.filter (fun x => decide (x ≥ pivot))
-        ∃ Output : List ℕ,
-        PMF.bind (QuickSort_A L1)
-        (fun S1 =>
-        PMF.bind (QuickSort_A L2) (fun S2 => PMF.pure (S1 ++ [pivot] ++ S2))) = PMF.pure Output
-        ∧ Output.SortedLE ∧ Output.Perm L := by
-        intro idx_pivot
-        let pivot := L[idx_pivot]
-        let rest := L.eraseIdx idx_pivot
-        let L1 := rest.filter (fun x => decide (x < pivot))
-        let L2 := rest.filter (fun x => decide (x ≥ pivot))
-        /- By ih, since L1.length < L.length and L2.length < L.length,
-        we know that QuickSort_A L1 and QuickSort_A L2 are Pure PMF's
-        on certain respective outputs: Output1 and Output2 that are
-        sorted and are permutations of L1 and L2 respectively.-/
-        obtain ⟨Output1, ⟨EqPure1, ⟨Sorted1, Perm1⟩⟩⟩ := by
-          apply ih L1.length
-          grind only [→ Fin.pos', usr length_filter_le, usr Fin.isLt, = length_eraseIdx]
-          rfl
-        obtain ⟨Output2, ⟨EqPure2, ⟨Sorted2, Perm2⟩⟩⟩ := by
-          apply ih L2.length
-          grind only [→ Fin.pos', usr length_filter_le, usr Fin.isLt, = length_eraseIdx]
-          rfl
-        use Output1 ++ [pivot] ++ Output2
-        constructor
-        · -- the multiple bind operations in the recursive call result in a
-          -- PMF.pure (Output1 ++ [pivot] ++ Output2). This is nicely done
-          -- by our extended grind! (Check by removing the 'import ARA.Tactics').
-          grind only [= PMF.pure_bind, #43c4]
-        · constructor
-          · -- Output1 ++ [pivot] ++ Output2 is sorted
-            -- 1. Extract the upper bound for Output1
-            have h_out1_bound : ∀ x ∈ Output1, x < pivot := by
-              intro x hx
-              have hx_in_L1 : x ∈ L1 := Perm1.subset hx
-              simp only [L1, List.mem_filter, decide_eq_true_eq] at hx_in_L1
-              omega
-            -- 2. Extract the lower bound for Output2
-            have h_out2_bound : ∀ x ∈ Output2, pivot ≤ x := by
-              intro x hx
-              have hx_in_L2 : x ∈ L2 := Perm2.subset hx
-              simp only [L2, List.mem_filter, decide_eq_true_eq] at hx_in_L2
-              omega
-            -- 3. Combine Sorted1, Sorted2, and the bounds.
-            -- First, prove the right side (pivot :: Output2) is sorted.
-            have h_right_sorted : (Output1 ++ [pivot]).SortedLE := by
-              rw [List.sortedLE_iff_pairwise]
-              grind
-            -- Second, establish that every element in the left side is ≤ every element in the right side.
-            have h_cross_bound : ∀ x ∈ Output1 ++ [pivot], ∀ y ∈ Output2, x ≤ y := by
-              intro x hx y hy
-              grind
-            rw [List.sortedLE_iff_pairwise]
-            apply List.pairwise_append.mpr
-            grind
-          · -- Output1 ++ [pivot] ++ Output2 is a permutation of L.
-            have h_perm_concat : (Output1 ++ [pivot] ++ Output2).Perm (L1 ++ [pivot] ++ L2) := by
-              exact List.Perm.append (List.Perm.append Perm1 (List.Perm.refl [pivot])) Perm2
-            have h_partition_sort : (L1 ++ [pivot] ++ L2).Perm L := by
-              have h_perm_middle : (L1 ++ [pivot] ++ L2).Perm ([pivot] ++ (L1 ++ L2)) := by
-                simp only [List.append_assoc]
-                grind
-              have h_filter_perm : ([pivot] ++ (L1 ++ L2)).Perm (pivot :: rest) := by
-                apply List.Perm.cons
-                have h_append := List.filter_append_perm (fun x => decide (x < pivot)) rest
-                have h_equiv : List.filter (fun x => !(decide (x < pivot))) rest = L2 := by
-                  grind
-                rwa [h_equiv] at h_append
-              have h_rest_perm : (pivot :: rest).Perm L := by
-                apply List.Perm.symm
-                apply (perm_getElem_cons_eraseIdx)
-              exact List.Perm.trans h_perm_middle (List.Perm.trans h_filter_perm h_rest_perm)
-            exact List.Perm.trans h_perm_concat h_partition_sort
-
-      have h_partition_refined : ∃ Output : List ℕ, ∀ idx_pivot : Fin L.length,
-        let pivot := L[idx_pivot]
-        let rest := L.eraseIdx idx_pivot
-        let L1 := rest.filter (fun x => decide (x < pivot))
-        let L2 := rest.filter (fun x => decide (x ≥ pivot))
-        PMF.bind (QuickSort_A L1)
-        (fun S1 =>
-        PMF.bind (QuickSort_A L2) (fun S2 => PMF.pure (S1 ++ [pivot] ++ S2))) = PMF.pure Output
-        ∧ Output.SortedLE ∧ Output.Perm L := by
-          -- We get an Output from h_partition by using the index 0 (possible as the list is nonempty)
-          -- Then we introduce any index and get for free the right of the constructor, for the left of
-          -- it we get the output from h_partition, then show that it must be the same as the first output
-          -- so we are done
-          obtain ⟨Output0, hPure0, hSorted0, hPerm0⟩ := h_partition ⟨0, by simp [L]⟩
-          use Output0
-          intro idx_pivot
-          obtain ⟨Output_i, hPure_i, hSorted_i, hPerm_i⟩ := h_partition idx_pivot
-          -- Both Output0 and Output_i are sorted permutations of L, so they must be equal
-          have h_eq : Output_i = Output0 := by
-            apply List.Perm.eq_of_pairwise
-            · exact fun _ _ _ _ hab hba => Nat.le_antisymm hab hba
-            · exact List.sortedLE_iff_pairwise.mp hSorted_i
-            · exact List.sortedLE_iff_pairwise.mp hSorted0
-            · exact hPerm_i.trans hPerm0.symm
-          rw [h_eq] at hPure_i
-          exact ⟨hPure_i, hSorted0, hPerm0⟩
-
-      -- Now use h_partition_refined to prove the main goal
-      obtain ⟨Output, hOutput⟩ := h_partition_refined
-      obtain ⟨hPure, hSorted, hPerm⟩ := hOutput ⟨0, by simp [L]⟩
-      use Output
-      constructor
-      · -- Show QuickSort_A L = PMF.pure Output
-        have h_const : ∀ idx : Fin L.length,
-          (let pivot := L[idx]
-           let rest := L.eraseIdx idx
-           let L1 := rest.filter (fun x => decide (x < pivot))
-           let L2 := rest.filter (fun x => decide (x ≥ pivot))
-           PMF.bind (QuickSort_A L1) fun S1 =>
-           PMF.bind (QuickSort_A L2) fun S2 => PMF.pure (S1 ++ [pivot] ++ S2)) =
-          PMF.pure Output := fun idx => (hOutput idx).1
-        calc QuickSort_A L
-            = (PMF.uniformOfFintype (Fin L.length)).bind fun idx =>
-                let pivot := L[idx]
-                let rest := L.eraseIdx idx
-                let L1 := rest.filter (fun x => decide (x < pivot))
-                let L2 := rest.filter (fun x => decide (x ≥ pivot))
-                PMF.bind (QuickSort_A L1) fun S1 =>
-                PMF.bind (QuickSort_A L2) fun S2 => PMF.pure (S1 ++ [pivot] ++ S2) := by
-              rw [QuickSort_A]; rfl
-          _ = (PMF.uniformOfFintype (Fin L.length)).bind fun _ => PMF.pure Output := by
-              congr 1; funext idx; exact h_const idx
-          _ = PMF.pure Output := PMF.bind_const _ _
-      · exact ⟨hSorted, hPerm⟩
-
-lemma Correctness_Quicksort_A_bis : ∀ L : List ℕ, ∃ Output : List ℕ,
-  QuickSort_A L = PMF.pure Output ∧ Output.SortedLE ∧ Output.Perm L := by
-  refine QuickSort_A.induct
-    (motive := fun L => ∃ Output : List ℕ,
-      QuickSort_A L = PMF.pure Output ∧ Output.SortedLE ∧ Output.Perm L)
-    ?_ ?_
-  · refine ⟨[], ?_⟩
-    constructor
-    · simp [QuickSort_A.eq_1]
-    · constructor
-      · simp [List.sortedLE_iff_pairwise]
-      · simp
-  · intro head tail h_nonempty ihL1 ihL2
-    let L : List ℕ := head :: tail
-
-    have h_partition : ∀ idx_pivot : Fin L.length,
-      let pivot := L[idx_pivot]
-      let rest := L.eraseIdx idx_pivot
+/-- Simp lemma: desugar `QuickSort_A (h :: t)` from do-notation into explicit `PMF.bind`. -/
+lemma QuickSort_A_cons_bind (h : ℕ) (t : List ℕ) :
+    QuickSort_A (h :: t) =
+    have : Nonempty (Fin (h :: t).length) := ⟨0, by simp⟩
+    (PMF.uniformOfFintype (Fin (h :: t).length)).bind fun i =>
+      let pivot := (h :: t)[i]
+      let rest := (h :: t).eraseIdx i
       let L1 := rest.filter (fun x => decide (x < pivot))
       let L2 := rest.filter (fun x => decide (x ≥ pivot))
-      ∃ Output : List ℕ,
-      PMF.bind (QuickSort_A L1)
-      (fun S1 =>
-      PMF.bind (QuickSort_A L2) (fun S2 => PMF.pure (S1 ++ [pivot] ++ S2))) = PMF.pure Output
-      ∧ Output.SortedLE ∧ Output.Perm L := by
-      intro idx_pivot
-      let pivot := L[idx_pivot]
-      let rest := L.eraseIdx idx_pivot
-      let L1 := rest.filter (fun x => decide (x < pivot))
-      let L2 := rest.filter (fun x => decide (x ≥ pivot))
-      obtain ⟨Output1, hEqPure1, hSorted1, hPerm1⟩ := ihL1 idx_pivot
-      obtain ⟨Output2, hEqPure2, hSorted2, hPerm2⟩ := ihL2 idx_pivot
-      use Output1 ++ [pivot] ++ Output2
-      constructor
-      · rw [hEqPure1, hEqPure2]
-        simp [pivot]
-      · constructor
-        · have h_out1_bound : ∀ x ∈ Output1, x < pivot := by
-            intro x hx
-            have hx_in_L1 : x ∈ L1 := hPerm1.subset hx
-            simp only [L1, List.mem_filter, decide_eq_true_eq] at hx_in_L1
-            omega
-          have h_out2_bound : ∀ x ∈ Output2, pivot ≤ x := by
-            intro x hx
-            have hx_in_L2 : x ∈ L2 := hPerm2.subset hx
-            simp only [L2, List.mem_filter, decide_eq_true_eq] at hx_in_L2
-            omega
-          have h_left_sorted : (Output1 ++ [pivot]).SortedLE := by
-            rw [List.sortedLE_iff_pairwise]
-            grind
-          have h_cross_bound : ∀ x ∈ Output1 ++ [pivot], ∀ y ∈ Output2, x ≤ y := by
-            intro x hx y hy
-            grind
-          rw [List.sortedLE_iff_pairwise]
-          apply List.pairwise_append.mpr
-          grind
-        · have h_perm_concat : (Output1 ++ [pivot] ++ Output2).Perm (L1 ++ [pivot] ++ L2) := by
-            exact List.Perm.append (List.Perm.append hPerm1 (List.Perm.refl [pivot])) hPerm2
-          have h_partition_sort : (L1 ++ [pivot] ++ L2).Perm L := by
-            have h_perm_middle : (L1 ++ [pivot] ++ L2).Perm ([pivot] ++ (L1 ++ L2)) := by
-              simp only [List.append_assoc]
-              grind
-            have h_filter_perm : ([pivot] ++ (L1 ++ L2)).Perm (pivot :: rest) := by
-              apply List.Perm.cons
-              have h_append := List.filter_append_perm (fun x => decide (x < pivot)) rest
-              have h_equiv : List.filter (fun x => !(decide (x < pivot))) rest = L2 := by
-                grind
-              rwa [h_equiv] at h_append
-            have h_rest_perm : (pivot :: rest).Perm L := by
-              apply List.Perm.symm
-              exact perm_getElem_cons_eraseIdx L idx_pivot
-            exact List.Perm.trans h_perm_middle (List.Perm.trans h_filter_perm h_rest_perm)
-          exact List.Perm.trans h_perm_concat h_partition_sort
+      PMF.bind (QuickSort_A L1) fun S1 =>
+      PMF.bind (QuickSort_A L2) fun S2 => PMF.pure (S1 ++ [pivot] ++ S2) := by
+  simpa using QuickSort_A.eq_2 h t
 
-    have h_partition_refined : ∃ Output : List ℕ, ∀ idx_pivot : Fin L.length,
-      let pivot := L[idx_pivot]
-      let rest := L.eraseIdx idx_pivot
-      let L1 := rest.filter (fun x => decide (x < pivot))
-      let L2 := rest.filter (fun x => decide (x ≥ pivot))
-      PMF.bind (QuickSort_A L1)
-      (fun S1 =>
-      PMF.bind (QuickSort_A L2) (fun S2 => PMF.pure (S1 ++ [pivot] ++ S2))) = PMF.pure Output
-      ∧ Output.SortedLE ∧ Output.Perm L := by
-      obtain ⟨Output0, hPure0, hSorted0, hPerm0⟩ := h_partition ⟨0, by grind⟩
-      use Output0
-      intro idx_pivot
-      obtain ⟨Output_i, hPure_i, hSorted_i, hPerm_i⟩ := h_partition idx_pivot
-      have h_eq : Output_i = Output0 := by
-        apply List.Perm.eq_of_pairwise
-        · exact fun _ _ _ _ hab hba => Nat.le_antisymm hab hba
-        · exact List.sortedLE_iff_pairwise.mp hSorted_i
-        · exact List.sortedLE_iff_pairwise.mp hSorted0
-        · exact hPerm_i.trans hPerm0.symm
-      rw [h_eq] at hPure_i
-      exact ⟨hPure_i, hSorted0, hPerm0⟩
+/-! ### Correctness Proof -/
 
-    obtain ⟨Output, hOutput⟩ := h_partition_refined
-    obtain ⟨hPure, hSorted, hPerm⟩ := hOutput ⟨0, by grind⟩
-    use Output
-    constructor
-    · have h_const : ∀ idx : Fin L.length,
-        (let pivot := L[idx]
-         let rest := L.eraseIdx idx
-         let L1 := rest.filter (fun x => decide (x < pivot))
-         let L2 := rest.filter (fun x => decide (x ≥ pivot))
-         PMF.bind (QuickSort_A L1) fun S1 =>
-         PMF.bind (QuickSort_A L2) fun S2 => PMF.pure (S1 ++ [pivot] ++ S2)) =
-        PMF.pure Output := fun idx => (hOutput idx).1
-      calc QuickSort_A L
-          = (PMF.uniformOfFintype (Fin L.length)).bind fun idx =>
-              let pivot := L[idx]
-              let rest := L.eraseIdx idx
-              let L1 := rest.filter (fun x => decide (x < pivot))
-              let L2 := rest.filter (fun x => decide (x ≥ pivot))
-              PMF.bind (QuickSort_A L1) fun S1 =>
-              PMF.bind (QuickSort_A L2) fun S2 => PMF.pure (S1 ++ [pivot] ++ S2) := by
-            simpa [L] using (QuickSort_A.eq_2 head tail)
-        _ = (PMF.uniformOfFintype (Fin L.length)).bind fun _ => PMF.pure Output := by
-            congr 1
-            funext idx
-            exact h_const idx
-        _ = PMF.pure Output := PMF.bind_const _ _
-    · exact ⟨hSorted, hPerm⟩
+lemma Correctness_Quicksort_A : ∀ L : List ℕ, ∃ Output : List ℕ,
+    QuickSort_A L = PMF.pure Output ∧ Output.SortedLE ∧ Output.Perm L := by
+  refine QuickSort_A.induct (motive := fun L => ∃ Output,
+    QuickSort_A L = PMF.pure Output ∧ Output.SortedLE ∧ Output.Perm L) ?_ ?_
+  -- Base case
+  · exact ⟨[], by simp [QuickSort_A.eq_1], by simp [sortedLE_iff_pairwise], by simp⟩
+  -- Inductive case
+  · intro head tail _ ihL1 ihL2
+    let L := head :: tail
+    -- For each pivot, build a correct output from the IH
+    have h_step : ∀ i : Fin L.length, ∃ Out,
+        qs_branch L i = PMF.pure Out ∧ Out.SortedLE ∧ Out.Perm L := by
+      intro i
+      obtain ⟨O1, h1, s1, p1⟩ := ihL1 i
+      obtain ⟨O2, h2, s2, p2⟩ := ihL2 i
+      exact ⟨O1 ++ [L[i]] ++ O2,
+        by grind only [= PMF.pure_bind],
+        sorted_concat_pivot s1 s2
+          (fun x hx => by have := p1.subset hx; simp only [mem_filter, decide_eq_true_eq] at this; exact this.2)
+          (fun x hx => by have := p2.subset hx; simp only [mem_filter, decide_eq_true_eq] at this; exact this.2),
+        (Perm.append (Perm.append p1 (.refl _)) p2).trans (perm_filter_partition L i)⟩
+    -- All pivots yield the same output (uniqueness of sorted permutation)
+    obtain ⟨Output, h0, hS, hP⟩ := h_step ⟨0, by grind⟩
+    refine ⟨Output, ?_, hS, hP⟩
+    calc QuickSort_A L
+        = (PMF.uniformOfFintype (Fin L.length)).bind (qs_branch L) := by
+          unfold qs_branch; simpa [L, ← PMF.bind_pure_comp] using QuickSort_A.eq_2 head tail
+      _ = (PMF.uniformOfFintype (Fin L.length)).bind fun _ => PMF.pure Output := by
+          congr 1; funext i
+          obtain ⟨Oi, hi, si, pi⟩ := h_step i
+          rwa [eq_of_sortedLE_perm si hS (pi.trans hP.symm)] at hi
+      _ = PMF.pure Output := PMF.bind_const _ _
 
 end ARA
