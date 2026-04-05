@@ -166,10 +166,10 @@ partial def QuickSort_Rand : List ℕ → IO (List ℕ)
 
   - Given a list L ≠ [], we want to bind the pivot distribution P (a distribution over ℕ with finite support)
     with the function f (defined recursively) that takes any pivot and returns the pure distribution of the
-    sorted list given that pivot. The problem is that the pivot can be out of bounds and we cannot prove that it is not, so we
-    cannot directly use bind. We can however use bindOnSupport! Since the pivot distribution is supported on L,
-    we can prove that any pivot drawn from it (with positive probability) is in L and thus the function f is
-    well defined on the support of the pivot distribution.
+    sorted list given that pivot. The problem is that the pivot can be out of bounds and we cannot prove that it
+    is not, so we cannot directly use bind. We can however use bindOnSupport! Since the pivot distribution is
+    supported on L, we can prove that any pivot drawn from it (with positive probability) is in L and thus the
+    function f is well defined on the support of the pivot distribution.
 
   - So, first we can define a pivot distribution that is uniform over the elements of the list L
     (which is equivalent to being uniform over the indices of the list L):
