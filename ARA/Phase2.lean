@@ -164,30 +164,22 @@ partial def QuickSort_Rand : List ℕ → IO (List ℕ)
 
   How do we proceed:
 
-  - Given a list L ≠ [], we want to bind the pivot distribution P (a distribution over ℕ with finite support)
-    with the function f (defined recursively) that takes any pivot and returns the pure distribution of the
-    sorted list given that pivot. The problem is that the pivot can be out of bounds and we cannot prove that it is not, so we
-    cannot directly use bind. We can however use bindOnSupport! Since the pivot distribution is supported on L,
-    we can prove that any pivot drawn from it (with positive probability) is in L and thus the function f is
-    well defined on the support of the pivot distribution.
+  - Given a list L ≠ [], we pick a pivot index uniformly at random from Fin L.length.
+    Using Fin L.length instead of ℕ means the index is guaranteed in-bounds by its type,
+    so we can use a plain bind without needing bindOnSupport.
 
-  - So, first we can define a pivot distribution that is uniform over the elements of the list L
-    (which is equivalent to being uniform over the indices of the list L):
-    idx_pivot_dist : PMF ℕ := PMF.uniformOfFintype (Fin L.length) where L is the input list.
+  - The pivot distribution is: idx_pivot_dist := PMF.uniformOfFintype (Fin L.length).
 
-  - Secondly, we can define the function ℕ × Prop → PMF (List ℕ) partitioning step that takes any pivot and the
-    proof that the pivot is in the list and returns the two sublists:
-     fun idx_pivot h_idx_pivot =>
-      let pivot := L[idx_pivot]
-      let rest := L.eraseIdx idx_pivot
-
-      let L1 := rest.filter (fun x => x < pivot)
-      let L2 := rest.filter (fun x => x ≥ pivot)
-      do
-        let S1 ← QuickSort_A L1
-        let S2 ← QuickSort_A L2
-        return (S1 ++ [pivot] ++ S2)
-
+  - Then we bind with the recursive step:
+      fun idx_pivot =>
+        let pivot := L[idx_pivot]   -- safe: idx_pivot : Fin L.length
+        let rest := L.eraseIdx idx_pivot
+        let L1 := rest.filter (· < pivot)
+        let L2 := rest.filter (· ≥ pivot)
+        do
+          let S1 ← QuickSort_A L1
+          let S2 ← QuickSort_A L2
+          return (S1 ++ [pivot] ++ S2)
 -/
 noncomputable def QuickSort_A : List ℕ → PMF (List ℕ) := fun
 | [] => PMF.pure []
@@ -213,8 +205,7 @@ decreasing_by all_goals grind
 
 -- Now we can analyze the probability of certain events.
 /--
-  Lemma: The probability that QuickSort_A on an empty list returns
-  an empty list is exactly 1 (100%).
+  QuickSort_A on the empty list returns [] with probability 1.
 -/
 lemma prob_quicksort_empty : QuickSort_A [] [] = 1 := by
   -- The definition of QuickSort_A on an empty list is just PMF.pure [],
@@ -223,8 +214,8 @@ lemma prob_quicksort_empty : QuickSort_A [] [] = 1 := by
   simp
 
 /--
-  Lemma: A single-element list also deterministically returns itself
-  with probability 1.
+  QuickSort_A on a single element list also returns that element with probability 1
+  (there is only one possible pivot so the result is deterministic).
 -/
 lemma prob_quicksort_singleton (n : ℕ) : QuickSort_A [n] [n] = 1 := by
 -- The pivot distribution is uniform over the single element list,

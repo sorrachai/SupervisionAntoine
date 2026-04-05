@@ -4,11 +4,12 @@ import ARA.Tactics
 /-!
 # QuickSort Correctness Proof
 
-This module proves the correctness of `QuickSort_A`.
+This module proves that QuickSort_A always returns a sorted permutation of its input.
 
-The proof uses the function's own induction principle (`QuickSort_A.induct`) and factors
-out 4 reusable helpers: uniqueness of sorted permutations, sorted concatenation around
-a pivot, and the filter-partition permutation property.
+The proof uses the custom induction principle QuickSort_A.induct and relies on
+a few helper lemmas: uniqueness of sorted permutations, sorted concatenation around
+a pivot, eraseIdx gives a permutation of the original list, and the filter-partition
+permutation property.
 -/
 
 namespace ARA
@@ -63,25 +64,11 @@ lemma perm_filter_partition (L : List ℕ) (i : Fin L.length) :
     simp only [append_assoc]; grind
   exact hmid.trans ((Perm.cons _ hf).trans (perm_getElem_cons_eraseIdx L i).symm)
 
-/-- Simp lemma: desugar `QuickSort_A (h :: t)` from do-notation into explicit `PMF.bind`. -/
-lemma QuickSort_A_cons_bind (h : ℕ) (t : List ℕ) :
-    QuickSort_A (h :: t) =
-    have : Nonempty (Fin (h :: t).length) := ⟨0, by simp⟩
-    (PMF.uniformOfFintype (Fin (h :: t).length)).bind fun i =>
-      let pivot := (h :: t)[i]
-      let rest := (h :: t).eraseIdx i
-      let L1 := rest.filter (fun x => decide (x < pivot))
-      let L2 := rest.filter (fun x => decide (x ≥ pivot))
-      PMF.bind (QuickSort_A L1) fun S1 =>
-      PMF.bind (QuickSort_A L2) fun S2 => PMF.pure (S1 ++ [pivot] ++ S2) := by
-  simpa using QuickSort_A.eq_2 h t
-
 /-! ### Correctness Proof -/
 
 lemma Correctness_Quicksort_A : ∀ L : List ℕ, ∃ Output : List ℕ,
     QuickSort_A L = PMF.pure Output ∧ Output.SortedLE ∧ Output.Perm L := by
-  refine QuickSort_A.induct (motive := fun L => ∃ Output,
-    QuickSort_A L = PMF.pure Output ∧ Output.SortedLE ∧ Output.Perm L) ?_ ?_
+  apply QuickSort_A.induct
   -- Base case
   · exact ⟨[], by simp [QuickSort_A.eq_1], by simp [sortedLE_iff_pairwise], by simp⟩
   -- Inductive case
@@ -93,12 +80,11 @@ lemma Correctness_Quicksort_A : ∀ L : List ℕ, ∃ Output : List ℕ,
       intro i
       obtain ⟨O1, h1, s1, p1⟩ := ihL1 i
       obtain ⟨O2, h2, s2, p2⟩ := ihL2 i
-      exact ⟨O1 ++ [L[i]] ++ O2,
-        by grind only [= PMF.pure_bind],
-        sorted_concat_pivot s1 s2
-          (fun x hx => by have := p1.subset hx; simp only [mem_filter, decide_eq_true_eq] at this; exact this.2)
-          (fun x hx => by have := p2.subset hx; simp only [mem_filter, decide_eq_true_eq] at this; exact this.2),
-        (Perm.append (Perm.append p1 (.refl _)) p2).trans (perm_filter_partition L i)⟩
+      use O1 ++ [L[i]] ++ O2
+      split_ands
+      · grind only [= PMF.pure_bind]
+      · apply sorted_concat_pivot s1 s2 <;> grind
+      · exact (Perm.append (Perm.append p1 (.refl _)) p2).trans (perm_filter_partition L i)
     -- All pivots yield the same output (uniqueness of sorted permutation)
     obtain ⟨Output, h0, hS, hP⟩ := h_step ⟨0, by grind⟩
     refine ⟨Output, ?_, hS, hP⟩

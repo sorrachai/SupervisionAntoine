@@ -3,10 +3,11 @@ import ARA.Basic
 /-!
   ### Phase 1: Basic Probability Manipulation and familiarisation with PMF
 
-  Here we implement the specific use cases:
-  1.  **Chaining (bind):** A coin flip deciding between different subsequent random processes.
-  2.  **Deterministic Steps (pure):** Embedding deterministic values into the probability space.
-  3.  **Strict Safety (bindOnSupport):** Mathematically guaranteeing that invalid operations are never reachable.
+  Here we go through the three main use cases of the PMF monad:
+  1. Chaining (bind): a coin flip decides between different subsequent random processes.
+  2. Deterministic Steps (pure): embedding a deterministic value into the PMF monad.
+  3. Strict Safety (bindOnSupport): forcing the compiler to prove that unsafe operations
+     (like out-of-bounds indexing) are never reachable.
 -/
 
 namespace ARA
@@ -14,18 +15,14 @@ namespace ARA
 open PMF
 
 /--
-  **Use 1**
+  Use 1
 
-  "Imagine an algorithm that flips a fair coin, and if heads, it rolls a 6-sided die;
-  if tails, it rolls a 20-sided die."
+  Example: flip a fair coin, heads -> roll d6, tails -> roll d20.
+  bind (>>=) handles the probability mass multiplication automatically:
+  - P(Heads) * P(d6=k) = 1/2 * 1/6
+  - P(Tails) * P(d20=k) = 1/2 * 1/20
 
-  `bind` (>>=) automatically handles the probability mass multiplication:
-  - Path 1: P(Heads) * P(d6=k) = 1/2 * 1/6
-  - Path 2: P(Tails) * P(d20=k) = 1/2 * 1/20
-
-
-  First we need to model a simple coin flip as a Bernoulli trial with parameter p=1/2.
-  This corresponds to one of the simplest randomized algorithm primitive.
+  First we model a simple coin flip as a Bernoulli trial with parameter p=1/2.
 -/
 noncomputable def coin_flip : PMF Bool := PMF.bernoulli (1/2 : NNReal) (by norm_num)
 
@@ -93,12 +90,10 @@ theorem prob_rolling_3 : mixed_dice_game 3 = (1/2) * (1/6) + (1/2) * (1/20) := b
   simp_all
 
 /--
-  **Use 2**
+  Use 2
 
-  "If an algorithm reaches a deterministic step... pure embeds that guaranteed result."
-
-  For example building on the previous example, we can define a deterministic bonus
-  that adds 100 to the die result.
+  pure embeds a deterministic value into the PMF monad.
+  Building on the previous example, we define a deterministic bonus that adds 100 to the die result.
 -/
 noncomputable def deterministic_bonus (score : ℕ) : PMF ℕ := PMF.pure (score + 100)
 
@@ -113,29 +108,19 @@ theorem prob_rolling_k_with_bonus (k : ℕ) : mixed_dice_game_with_bonus (k + 10
 
 
 /--
-  **Use 3**
+  Use 3
 
-  "bindOnSupport is the standard bind operation but with an additional safety check: it
-  requires a logical proof that a specific outcome is actually possible before allowing
-  the function to calculate the next step."
+  bindOnSupport is like bind but the continuation only needs to be defined on the support
+  of the distribution (i.e. where P x ≠ 0). The extra argument h : P x ≠ 0 acts as a
+  compile-time proof that x is actually reachable.
 
-  Specifically, this means that if we have a distribution P : PMF α that is only supported
-  on certain values S ⊆ α that satisfy a property P(x) (e.g. "x < 2"), we can use `bindOnSupport`
-  to ensure that any subsequent operations are only defined on those values i.e.
-  P.bindsupport (λ x h => ...) (for a λ : α → β) (where h is the proof that x is in the support
-  of P and thus satisfies P(x)) will be the probability distribution on β obtained by
-  applying the function λ to all x in the support of P, weighted by their probability
-  (it is indeed a PMF since the total sum remains 1 as the domain of the function λ is exactly
-  the support of P):
+  This is useful when we want to do "unsafe" operations (like indexing into a list) and we
+  want the compiler to force us to prove those operations are only called on valid inputs,
+  instead of relying on default values or Option types.
 
-  for b : β, P.bindsupport (λ x h => ...) b = ∑ x in support of P, P x * (λ x h) b.
-
-
-  Example:
-  This is particularly useful when we want to ensure that certain "unsafe" operations are never
-  reachable. For example, if we have a distribution over natural numbers that is only supported
-  on {0, 1}, and we want to use these numbers as indices to access a list of size 2, we can
-  use `bindOnSupport` to ensure that we never try to access an out-of-bounds index (like 2 or more).
+  Example: a distribution supported on {0, 1} is used to index into a 2-element list.
+  With bindOnSupport the compiler forces us to prove n < 2 before we can call the list accessor,
+  so we never touch an out-of-bounds index.
 -/
 
 -- A distribution that only supports {0, 1}
